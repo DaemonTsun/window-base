@@ -7,6 +7,8 @@
 #include "window/fonts.hpp"
 #include "window/window_imgui_util.hpp"
 
+#include "fs-ui/filepicker.hpp"
+
 #include "project_info.hpp"
 
 static ImFont *ui_font = nullptr;
@@ -17,12 +19,43 @@ const int window_height = 900;
 
 static void _update(GLFWwindow *window, double dt)
 {
+    static char buf[256] = {0};
     ui_new_frame();
 
-    ImGui::Begin("Window");
+    ImGui::SetNextWindowSize({450, 200});
+    ImGui::Begin("InputText After & Before text");
+    {
+        ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
 
-    ImGui::Text("Hello");
+        ImGui::InputText("Input Label 1", buf, 255);
 
+        ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
+    }
+    ImGui::End();
+
+    ImGui::SetNextWindowSize({600, 200});
+    ImGui::Begin("InputText SameLine");
+    {
+        ImGui::Text("Lorem ipsum");
+        ImGui::SameLine();
+
+        ImGui::PushItemWidth(-200);
+        ImGui::InputText("Input Label 2", buf, 255);
+        ImGui::SameLine();
+
+        ImGui::Text("Lorem ipsum abcdef hello world");
+    }
+    ImGui::End();
+
+    ImGui::SetNextWindowSize({450, 200});
+    ImGui::Begin("Filepicker After & Before text");
+    {
+        ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
+
+        FsUi::Filepicker("File Label 1", buf, 255);
+
+        ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
+    }
     ImGui::End();
 
     ui_end_frame();
