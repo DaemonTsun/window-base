@@ -17,9 +17,165 @@ See below for implementation-specific documentation.
 #include "shl/allocator.hpp"
 #include "shl/hash_table.hpp"
 
-#include "find_font.hpp"
+#include "window/find_font.hpp"
 
-#if Linux
+#if Windows
+#include <windows.h>
+
+// there is no "Regular" style as far as I can tell, at least not for system fonts
+#define FF_DEFAULT_STYLE ""
+
+/* REGISTRY DOCUMENTATION
+
+This one is simpler than fontconfig, fonts are registered in two Registry keys,
+one for the system and one for the current user:
+
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts
+HKEY_CURRENT_USER\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts
+
+The former is the key for the installed system fonts, the latter
+is the key for the user-installed fonts, which may be different per user.
+
+The names of the values of those keys have the following schema:
+
+"<Font Family> [Style] [(Type)]"
+Font Family is always present.
+Style is not present for "default" or "regular" styles, e.g. "Arial (TrueType)" does
+not have a style name.
+The (Type) is the type of font, although this is not used here, so we truncate
+this information.
+
+The value of the keys contain the filenames in the case of system fonts, or
+full paths in the case of user-installed fonts.
+System fonts are most likely stored in C:\Windows\Fonts, so that path may
+be prepended to the filenames of system font registry values.
+*/
+#define REGISTRY_FONTS_KEY R"(SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts)"
+#define FONTS_SYSTEM_PATH  R"(C:\Windows\Fonts\)"
+
+struct ff_cache
+{
+    hash_table<string, string> entries;
+    string name_buffer;
+    ::allocator allocator;
+};
+
+static void init(ff_cache *cache)
+{
+    init(&cache->entries);
+    init(&cache->name_buffer);
+}
+
+static void free(ff_cache *cache)
+{
+    free<true, true>(&cache->entries);
+    free(&cache->name_buffer);
+}
+
+static bool _load_registry_fonts_base(ff_cache *c, HKEY hkey, const char *base_path)
+{
+    HKEY fonts_key;
+    LSTATUS ret = RegOpenKeyExA(hkey, REGISTRY_FONTS_KEY,
+                                      0,
+                                      KEY_READ | KEY_ENUMERATE_SUB_KEYS,
+                                      &fonts_key);
+
+    if (ret != ERROR_SUCCESS)
+        return false;
+
+    defer { RegCloseKey(fonts_key); };
+
+    DWORD value_count = 0;
+
+    ret = RegQueryInfoKeyA(fonts_key,
+                           nullptr,
+                           nullptr,
+                           nullptr,
+                           nullptr,
+                           nullptr,
+                           nullptr,
+                           &value_count,
+                           nullptr,
+                           nullptr,
+                           nullptr,
+                           nullptr);
+
+    if (ret != ERROR_SUCCESS)
+        return false;
+
+    if (value_count <= 0)
+        return true;
+
+#define MAX_VALUE_NAME 4096
+#define MAX_VALUE_DATA 4096
+    char value_name[MAX_VALUE_NAME] = {0};
+    char value_data[MAX_VALUE_DATA] = {0};
+    DWORD value_name_length = MAX_VALUE_NAME;
+    DWORD value_data_length = MAX_VALUE_DATA;
+    DWORD value_type = 0;
+
+    for (DWORD i = 0; i < value_count; ++i)
+    {
+        value_name_length = MAX_VALUE_NAME;
+        ret = RegEnumValueA(fonts_key,
+                            i,
+                            value_name,
+                            &value_name_length,
+                            nullptr,
+                            nullptr,
+                            nullptr,
+                            nullptr);
+
+        if (ret != ERROR_SUCCESS)
+            return false;
+
+        value_data_length = MAX_VALUE_DATA;
+
+        ret = RegGetValueA(fonts_key,
+                           nullptr,
+                           value_name,
+                           RRF_RT_REG_SZ,
+                           &value_type,
+                           value_data,
+                           &value_data_length);
+
+        if (ret != ERROR_SUCCESS)
+            return false;
+
+        const_string name = to_const_string(value_name, value_name_length);
+
+        s64 idx = last_index_of(name, " (");
+
+        if (idx != -1)
+            name = to_const_string(value_name, idx);
+
+        const_string value = to_const_string(value_data, value_data_length);
+
+        string *path = search_by_hash(&c->entries, hash(name));
+
+        if (path != nullptr)
+            continue;
+
+        string key = copy_string(name);
+        path = add_element_by_key(&c->entries, &key);
+        *path = copy_string(base_path);
+        append_string(path, value);
+    }
+
+    return true;
+}
+
+static bool _load_registry_fonts(ff_cache *c)
+{
+    if (c == nullptr)
+        return false;
+
+    bool ret = _load_registry_fonts_base(c, HKEY_LOCAL_MACHINE, FONTS_SYSTEM_PATH);
+    ret = ret && _load_registry_fonts_base(c, HKEY_CURRENT_USER, "");
+    return ret;
+}
+
+#elif Linux
 #include <dirent.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -476,6 +632,8 @@ static bool _load_fontconfig_cache(ff_cache *c)
         return false;
     }
 
+    tprint("found cache path: %\n", fc_path);
+
     array<string> cache_files{};
     defer { free<true>(&cache_files); };
 
@@ -512,7 +670,15 @@ extern "C" ff_cache *ff_load_font_cache(void *_alloc)
 
     with_allocator(a)
     {
-#if Linux
+#if Windows
+        init(ret);
+
+        if (!_load_registry_fonts(ret))
+        {
+            ff_unload_font_cache(ret);
+            return nullptr;
+        }
+#elif Linux
         init(ret);
 
         if (!_load_fontconfig_cache(ret))
@@ -556,12 +722,33 @@ extern "C" const char *ff_find_font_path(ff_cache *cache, const char *font_name,
     if (cache == nullptr || font_name == nullptr)
         return nullptr;
 
-    if (_style_name == nullptr)
+    if (_style_name == nullptr || string_length(_style_name) == 0)
         _style_name = FF_DEFAULT_STYLE;
 
     const_string style_name = to_const_string(_style_name);
 
-#if Linux
+#if Windows
+    hash_t h = 0;
+
+    if (style_name.size > 0)
+    {
+        string *buf = &cache->name_buffer;
+        set_string(buf, font_name);
+        append_string(buf, ' ');
+        append_string(buf, style_name);
+        h = hash(buf);
+    }
+    else
+        h = hash(font_name);
+
+    string *ret = search_by_hash(&cache->entries, h);
+
+    if (ret == nullptr)
+        return nullptr;
+
+    return ret->data;
+
+#elif Linux
     ff_cache_entry *e = search_by_hash(&cache->entries, hash(font_name));
 
     if (e == nullptr)
@@ -583,13 +770,35 @@ extern "C" const char *ff_find_font_path_vague(ff_cache *cache, const char *_fon
     if (cache == nullptr || _font_name == nullptr)
         return nullptr;
 
-    if (_style_name == nullptr)
+    if (_style_name == nullptr || string_length(_style_name) == 0)
         _style_name = FF_DEFAULT_STYLE;
 
     const_string font_name  = to_const_string(_font_name);
     const_string style_name = to_const_string(_style_name);
 
-#if Linux
+#if Windows
+    string *ret = nullptr;
+
+    for_array(hentry, &cache->entries.data)
+    {
+        if (hentry->hash <= FIRST_HASH)
+            continue;
+
+        if (!begins_with(hentry->key, font_name))
+            continue;
+
+        if (!contains(hentry->key, style_name))
+            continue;
+
+        ret = &hentry->value;
+        break;
+    }
+
+    if (ret == nullptr)
+        return nullptr;
+
+    return ret->data;
+#elif Linux
     ff_cache_entry *e = nullptr;
 
     for_array(hentry, &cache->entries.data)
@@ -631,7 +840,27 @@ extern "C" const char *ff_find_first_font_path(ff_cache *cache, const char **fon
     if (count <= 0 || ((count & 1) != 0))
         return nullptr;
 
-#if Linux
+#if Windows
+    const char *ret = nullptr;
+
+    for (int i = 0; i < count; i += 2)
+    {
+        const char *_font_name  = font_names_and_styles[i];
+        const char *_style_name = font_names_and_styles[i + 1];
+
+        ret = ff_find_font_path(cache, _font_name, _style_name);
+
+        if (ret != nullptr)
+        {
+            if (found_index != nullptr)
+                *found_index = i;
+
+            break;
+        }
+    }
+
+    return ret;
+#elif Linux
     const_string style_name{};
     ff_cache_entry *e = nullptr;
     ff_cache_entry_style *st = nullptr;
@@ -641,7 +870,7 @@ extern "C" const char *ff_find_first_font_path(ff_cache *cache, const char **fon
         const char *_font_name  = font_names_and_styles[i];
         const char *_style_name = font_names_and_styles[i + 1];
 
-        if (_style_name == nullptr)
+        if (_style_name == nullptr || string_length(_style_name) == 0)
             _style_name = FF_DEFAULT_STYLE;
 
         e = search_by_hash(&cache->entries, hash(_font_name));
@@ -676,7 +905,7 @@ extern "C" const char *ff_find_first_font_path_vague(ff_cache *cache, const char
     if (count <= 0 || ((count & 1) != 0))
         return nullptr;
 
-#if Linux
+#if Windows
     const char *ret = nullptr;
 
     for (int i = 0; i < count; i += 2)
@@ -684,7 +913,25 @@ extern "C" const char *ff_find_first_font_path_vague(ff_cache *cache, const char
         const char *_font_name  = font_names_and_styles[i];
         const char *_style_name = font_names_and_styles[i + 1];
 
-        if (_style_name == nullptr)
+        ret = ff_find_font_path_vague(cache, _font_name, _style_name);
+
+        if (ret != nullptr)
+        {
+            *found_index = i;
+            break;
+        }
+    }
+
+    return ret;
+#elif Linux
+    const char *ret = nullptr;
+
+    for (int i = 0; i < count; i += 2)
+    {
+        const char *_font_name  = font_names_and_styles[i];
+        const char *_style_name = font_names_and_styles[i + 1];
+
+        if (_style_name == nullptr || string_length(_style_name) == 0)
             _style_name = FF_DEFAULT_STYLE;
 
         ret = ff_find_font_path_vague(cache, _font_name, _style_name);
