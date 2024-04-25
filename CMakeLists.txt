@@ -30,6 +30,7 @@ add_exe(window-template
 
     EXT
         LIB shl      0.9.3 "${ROOT}/ext/shl" INCLUDE LINK GIT_SUBMODULE
+        LIB fs       0.8.0 "${ROOT}/ext/fs"  INCLUDE LINK GIT_SUBMODULE
 
     SUBMODULES
         MODULE glfw  "${ROOT}/ext/glfw"

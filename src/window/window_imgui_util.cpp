@@ -11,6 +11,7 @@
 
 
 #include "window_imgui_util.hpp"
+#include "fs-ui/filepicker.hpp"
 
 static const char *_glsl_version = "#version 330";
 
@@ -123,6 +124,8 @@ void ui_init(GLFWwindow *window)
 
     ImGui_ImplGlfw_InitForOpenGL(window, true /* install callbacks */);
     ImGui_ImplOpenGL3_Init(_glsl_version);
+
+    FsUi::Init();
 }
 
 void ui_exit(GLFWwindow *window)
@@ -130,6 +133,7 @@ void ui_exit(GLFWwindow *window)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+    FsUi::Exit(); // need to exit after imgui so imgui writes ini correctly
 }
 
 void ui_new_frame()

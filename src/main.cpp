@@ -58,6 +58,8 @@ static void _update(GLFWwindow *window, double dt)
     }
     ImGui::End();
 
+    ImGui::ShowDemoWindow();
+
     ui_end_frame();
 }
 
