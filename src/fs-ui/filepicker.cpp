@@ -6,6 +6,7 @@
 #include "shl/hash_table.hpp"
 #include "shl/memory.hpp"
 #include "shl/string.hpp"
+#include "shl/time.hpp"
 #include "fs/path.hpp"
 #include "fs-ui/filepicker.hpp"
 
@@ -106,11 +107,20 @@ void FsUi::Exit()
     free<false, true>(&_ini_dialog_settings);
 }
 
+#define fs_ui_dialog_label_size 32
 struct fs_ui_dialog_item
 {
     fs::path path;
     fs::filesystem_type type;
-    // fs::filesystem_info info;
+
+    s64  size; // item count for directories, bytes for files / symlinks
+    timespan modified;
+    timespan created;
+
+    char size_label[fs_ui_dialog_label_size];
+    char size_accurate_label[fs_ui_dialog_label_size];
+    char modified_label[fs_ui_dialog_label_size];
+    char created_label[fs_ui_dialog_label_size];
 };
 
 static void free(fs_ui_dialog_item *item)
@@ -126,12 +136,16 @@ struct fs_ui_dialog
     array<fs_ui_dialog_item> items;
     int  last_sort_criteria;
     bool last_sort_ascending;
+
+    fs::path _it_path; // used during iteration, constantly overwritten
 };
 
 static void init(fs_ui_dialog *diag)
 {
     fs::init(&diag->current_dir);
     init(&diag->items);
+
+    fs::init(&diag->_it_path);
 }
 
 static void free(fs_ui_dialog *diag)
@@ -144,6 +158,7 @@ enum fs_ui_dialog_sort_criteria
 {
     FsUi_Sort_Type,
     FsUi_Sort_Name,
+    FsUi_Sort_Size,
     FsUi_Sort_Modified,
     FsUi_Sort_Created,
 };
@@ -162,19 +177,93 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
     if (path != nullptr)
         fs::weakly_canonical_path(path, &diag->current_dir);
 
+    fs::path *it = &diag->_it_path;
+    fs::set_path(it, &diag->current_dir);
+
     // TODO: reuse item memory
     free<true>(&diag->items);
     init(&diag->items);
 
     if (err) err->error_code = 0;
 
+    const s64 base_size = it->size;
     for_path(item, &diag->current_dir, fs::iterate_option::QueryType, err)
     {
+        it->size = base_size;
+        it->data[base_size] = '\0';
+        fs::append_path(it, item->path);
+
         fs_ui_dialog_item *ditem = add_at_end(&diag->items);
         fill_memory(ditem, 0);
 
         fs::set_path(&ditem->path, item->path);
         ditem->type = item->type;
+
+        // Gather filesystem information
+
+        if (item->type == fs::filesystem_type::Directory)
+            ditem->size = fs::get_children_count(it);
+#if Windows
+        // TODO: implement
+#else // Linux
+        fs::filesystem_info info{};
+
+        if (!fs::get_filesystem_info(it, &info, true, FS_QUERY_DEFAULT_FLAGS, err))
+        {
+            free(ditem);
+            remove_from_end(&diag->items);
+            continue;
+        }
+
+        if (item->type != fs::filesystem_type::Directory)
+            ditem->size = info.stx_size;
+
+        ditem->modified.seconds     = info.stx_mtime.tv_sec;
+        ditem->modified.nanoseconds = info.stx_mtime.tv_nsec;
+        ditem->created.seconds      = info.stx_btime.tv_sec;
+        ditem->created.nanoseconds  = info.stx_btime.tv_nsec;
+#endif
+
+        // Prepare strings to display
+
+        // File size
+        if (ditem->size < 0)
+            copy_string("?", ditem->size_label);
+        else
+        {
+            if (item->type == fs::filesystem_type::Directory)
+                format(ditem->size_label, fs_ui_dialog_label_size, "% items", ditem->size);
+            else
+            {
+                constexpr const s64 EiB = S64_LIT(1) << S64_LIT(60);
+                constexpr const s64 PiB = S64_LIT(1) << S64_LIT(50);
+                constexpr const s64 TiB = S64_LIT(1) << S64_LIT(40);
+                constexpr const s64 GiB = S64_LIT(1) << S64_LIT(30);
+                constexpr const s64 MiB = S64_LIT(1) << S64_LIT(20);
+                constexpr const s64 KiB = S64_LIT(1) << S64_LIT(10);
+
+#define _FSUI_Format_Unit(Unit)\
+    else if (ditem->size >= Unit)\
+        format(ditem->size_label, fs_ui_dialog_label_size, "%.1f " #Unit, (double)ditem->size / (double)Unit);
+
+                format(ditem->size_accurate_label, fs_ui_dialog_label_size, "% bytes", ditem->size);
+
+                if (false) {}
+                _FSUI_Format_Unit(EiB)
+                _FSUI_Format_Unit(PiB)
+                _FSUI_Format_Unit(TiB)
+                _FSUI_Format_Unit(GiB)
+                _FSUI_Format_Unit(MiB)
+                _FSUI_Format_Unit(KiB)
+                else
+                    format(ditem->size_label, fs_ui_dialog_label_size, "% bytes", ditem->size);
+
+#undef _FSUI_Format_Unit
+            }
+        }
+
+        // Modified & Created date
+        // TODO: implement
     }
 
     if (err && err->error_code != 0)
@@ -207,7 +296,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     if (diag == nullptr)
     {
-        tprint("Alloc'd\n");
+        // tprint("Alloc'd\n");
         diag = alloc<fs_ui_dialog>();
         storage->SetVoidPtr(id, (void*)diag);
 
@@ -232,16 +321,60 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         _fs_ui_dialog_load_path(diag);
     }
 
+    ImGui::PushItemWidth(-1);
     ImGui::InputText("##input_bar", input_bar_content, 4095);
     
-    ImGui::Separator();
-
-    for_array(item, &diag->items)
+    const int table_flags = ImGuiTableFlags_ScrollY
+                          | ImGuiTableFlags_ScrollX
+                          | ImGuiTableFlags_NoBordersInBody
+                          | ImGuiTableFlags_BordersOuterV
+                          | ImGuiTableFlags_BordersOuterH
+                          | ImGuiTableFlags_RowBg
+                          | ImGuiTableFlags_Resizable;
+    const float bottom_padding = -100; // TODO: calculate with style, height of button + separator, etc
+    if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
     {
-        ImGui::Text("%s", item->path.data);
-    }
+        // Display headers so we can inspect their interaction with borders
+        // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
+        ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
+        ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Size");
+        ImGui::TableSetupColumn("Modified");
+        ImGui::TableSetupColumn("Created");
+        ImGui::TableHeadersRow();
 
-    ImGui::Separator();
+        for_array(item, &diag->items)
+        {
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+
+            switch (item->type)
+            {
+                case fs::filesystem_type::Directory: ImGui::Text("D"); break;
+                case fs::filesystem_type::File:      ImGui::Text("F"); break;
+                case fs::filesystem_type::Symlink:   ImGui::Text("L"); break;
+                default:                             ImGui::Text("?"); break;
+            }
+
+            ImGui::TableSetColumnIndex(1);
+            ImGui::Text("%s", item->path.data);
+
+            // Size
+            ImGui::TableSetColumnIndex(2);
+            ImGui::Text("%s", item->size_label);
+            if (item->size_accurate_label[0] && ImGui::IsItemHovered())
+                ImGui::SetTooltip("%s", item->size_accurate_label);
+
+            ImGui::TableSetColumnIndex(3);
+            ImGui::Text("%d", 0);
+
+            ImGui::TableSetColumnIndex(4);
+            ImGui::Text("%d", 0);
+        }
+
+        ImGui::EndTable();
+    }
 
     bool selected = ImGui::Button("Select");
 
@@ -251,7 +384,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     if (selected || cancelled)
     {
-        tprint("Free'd\n");
+        // tprint("Free'd\n");
 
         if (selected)
         {
@@ -262,6 +395,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         }
 
         free(diag);
+        dealloc(diag);
         storage->SetVoidPtr(id, nullptr);
     }
 
@@ -284,12 +418,14 @@ bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, ImGuiInputT
     ImGui::SameLine();
     ImGui::Text(label);
 
-    if (picker_clicked)
-        ImGui::OpenPopup("Select File...");
+    constexpr const char *popup_label = "Select File...";
 
-    if (ImGui::BeginPopupModal("Select File..."))
+    if (picker_clicked)
+        ImGui::OpenPopup(popup_label);
+
+    if (ImGui::BeginPopupModal(popup_label))
     {
-        if (FsUi::OpenFileDialog("Select File...", buf, buf_size, nullptr, 0))
+        if (FsUi::OpenFileDialog(popup_label, buf, buf_size, nullptr, 0))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
