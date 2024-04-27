@@ -20,6 +20,8 @@ add_exe(window-template
     CPP_WARNINGS ALL SANE FATAL
                  @GNU -Werror
 
+    # COMPILE_FLAGS @GNU -fno-char8_t
+
     LIBRARIES ${GLFW_LIBRARIES}
               ${imgui_LIBRARIES}
               ${OPENGL_LIBRARIES}

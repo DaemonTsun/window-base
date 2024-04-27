@@ -4,6 +4,7 @@
 #include "imgui_internal.h"
 
 #include "shl/print.hpp"
+#include "shl/sort.hpp"
 #include "shl/hash_table.hpp"
 #include "shl/memory.hpp"
 #include "shl/string.hpp"
@@ -11,10 +12,39 @@
 #include "fs/path.hpp"
 #include "fs-ui/filepicker.hpp"
 
+// utils
+static int lexicoraphical_compare(const char *s1, const char *s2)
+{
+    for (; *s1 && *s2; s1++, s2++)
+    {
+        if (*s1 < *s2) return -1;
+        if (*s1 > *s2) return  1;
+    }
+
+    if (*s2 != '\0') return -1;
+    if (*s1 != '\0') return  1;
+
+    return 0;
+}
+
+static int timespan_compare(const timespan *lhs, const timespan *rhs)
+{
+    if (lhs->seconds     < rhs->seconds)     return -1;
+    if (lhs->seconds     > rhs->seconds)     return  1;
+    if (lhs->nanoseconds < rhs->nanoseconds) return -1;
+    if (lhs->nanoseconds > rhs->nanoseconds) return  1;
+
+    return 0;
+}
+
+// fsui
+
 struct fs_ui_dialog_settings
 {
     ImGuiID id;
     string last_directory;
+    // TODO: implement bool show_hidden
+    // TODO: implement bool edit_bar
 };
 
 static void free(fs_ui_dialog_settings *settings)
@@ -135,6 +165,7 @@ struct fs_ui_dialog
     fs::path current_dir;
 
     array<fs_ui_dialog_item> items;
+    bool show_hidden;
     int  last_sort_criteria;
     bool last_sort_ascending;
 
@@ -143,6 +174,9 @@ struct fs_ui_dialog
 
 static void init(fs_ui_dialog *diag)
 {
+    fill_memory(diag, 0);
+    diag->last_sort_ascending = true;
+
     fs::init(&diag->current_dir);
     init(&diag->items);
 
@@ -155,6 +189,7 @@ static void free(fs_ui_dialog *diag)
     free<true>(&diag->items);
 }
 
+// must be same order as the table
 enum fs_ui_dialog_sort_criteria
 {
     FsUi_Sort_Type,
@@ -164,12 +199,117 @@ enum fs_ui_dialog_sort_criteria
     FsUi_Sort_Created,
 };
 
+static int _compare_item_type_ascending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    return compare_ascending((int)lhs->type, (int)rhs->type);
+}
+
+static int _compare_item_type_descending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    return -_compare_item_type_ascending(lhs, rhs);
+}
+
+#define sort_directories_first(lhs, rhs)\
+    if      (lhs->type == fs::filesystem_type::Directory && rhs->type != fs::filesystem_type::Directory) return -1;\
+    else if (rhs->type == fs::filesystem_type::Directory && lhs->type != fs::filesystem_type::Directory) return 1;
+
+static int _compare_item_name_ascending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return lexicoraphical_compare(lhs->path.data, rhs->path.data);
+}
+
+static int _compare_item_name_descending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return -lexicoraphical_compare(lhs->path.data, rhs->path.data);
+}
+
+static int _compare_item_size_ascending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return compare_ascending(lhs->size, rhs->size);
+}
+
+static int _compare_item_size_descending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return -compare_ascending(lhs->size, rhs->size);
+}
+
+static int _compare_item_modified_ascending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return timespan_compare(&lhs->modified, &rhs->modified);
+}
+
+static int _compare_item_modified_descending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return -timespan_compare(&lhs->modified, &rhs->modified);
+}
+
+static int _compare_item_created_ascending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return timespan_compare(&lhs->created, &rhs->created);
+}
+
+static int _compare_item_created_descending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
+{
+    sort_directories_first(lhs, rhs);
+    return -timespan_compare(&lhs->created, &rhs->created);
+}
+
 static void _fs_ui_dialog_sort_items(fs_ui_dialog *diag, int criteria, bool ascending = true)
 {
-    // TODO: implement
+    fs_ui_dialog_item *items = diag->items.data;
+    s64 count = diag->items.size;
+
+    if (count <= 0)
+        return;
+
+    compare_function_p<fs_ui_dialog_item> comp = nullptr;
+
+    switch (criteria)
+    {
+    case FsUi_Sort_Type:
+        if (ascending)  comp = _compare_item_type_ascending;
+        else            comp = _compare_item_type_descending;
+        break;
+    case FsUi_Sort_Name:
+        if (ascending)  comp = _compare_item_name_ascending;
+        else            comp = _compare_item_name_descending;
+        break;
+    case FsUi_Sort_Size:
+        if (ascending)  comp = _compare_item_size_ascending;
+        else            comp = _compare_item_size_descending;
+        break;
+    case FsUi_Sort_Modified:
+        if (ascending)  comp = _compare_item_modified_ascending;
+        else            comp = _compare_item_modified_descending;
+        break;
+    case FsUi_Sort_Created:
+        if (ascending)  comp = _compare_item_created_ascending;
+        else            comp = _compare_item_created_descending;
+        break;
+    }
+
+    if (comp != nullptr)
+        sort(items, count, comp);
 
     diag->last_sort_criteria  = criteria;
     diag->last_sort_ascending = ascending;
+}
+
+static void _fs_ui_sort_by_imgui_spec(fs_ui_dialog *diag, ImGuiTableSortSpecs *specs)
+{
+    for (int i = 0; i < specs->SpecsCount; ++i)
+    {
+        const ImGuiTableColumnSortSpecs *s = specs->Specs + i;
+
+        _fs_ui_dialog_sort_items(diag, s->ColumnIndex, s->SortDirection == ImGuiSortDirection_Ascending);
+    }
 }
 
 static inline ImVec2 floor(float x, float y)
@@ -396,6 +536,7 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
     return true;
 }
 
+
 namespace FsUi
 {
 bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter = nullptr, int flags = 0)
@@ -444,8 +585,20 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         _fs_ui_dialog_load_path(diag);
     }
 
-    ImGui::PushItemWidth(-1);
+    ImGui::PushItemWidth(-100);
     ImGui::InputText("##input_bar", input_bar_content, 4095);
+
+    /*
+    TODO: edit button for switching between writing and clicking path components
+    ImGui::SameLine();
+    ImGui::Button("Edit");
+
+    TODO: go button to submit written text
+    ImGui::SameLine();
+    ImGui::Button("Go");
+    */
+
+    ImGui::Checkbox("show hidden", &diag->show_hidden);
 
     const float font_size = ImGui::GetFontSize();
     const float bottom_padding = -100; // TODO: calculate with style, height of button + separator, etc
@@ -457,23 +610,37 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                           | ImGuiTableFlags_BordersOuterV
                           | ImGuiTableFlags_BordersOuterH
                           | ImGuiTableFlags_RowBg
-                          | ImGuiTableFlags_Resizable;
+                          | ImGuiTableFlags_Resizable
+                          | ImGuiTableFlags_Sortable
+                          // | ImGuiTableFlags_SortMulti
+                          ;
 
     if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
     {
         // Display headers so we can inspect their interaction with borders
         // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
         ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
-        ImGui::TableSetupColumn("");
-        ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Size");
-        ImGui::TableSetupColumn("Modified");
-        ImGui::TableSetupColumn("Created");
+        ImGui::TableSetupColumn(""/*type*/, ImGuiTableColumnFlags_DefaultSort);
+        ImGui::TableSetupColumn("Name",     ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Size",     ImGuiTableColumnFlags_DefaultSort);
+        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_DefaultSort);
+        ImGui::TableSetupColumn("Created",  ImGuiTableColumnFlags_DefaultSort);
         ImGui::TableHeadersRow();
+
+        if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs())
+        if (sort_specs->SpecsDirty)
+        {
+            _fs_ui_sort_by_imgui_spec(diag, sort_specs);
+            sort_specs->SpecsDirty = false;
+        }
+
         ImDrawList *draw_list = ImGui::GetWindowDrawList();
 
         for_array(item, &diag->items)
         {
+            if (!diag->show_hidden && item->path.data[0] == '.')
+                continue;
+
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
 
