@@ -1,5 +1,6 @@
 
 #define IMGUI_DEFINE_MATH_OPERATORS 1
+#include <time.h> // how sad
 #include "imgui_internal.h"
 
 #include "shl/print.hpp"
@@ -163,13 +164,133 @@ enum fs_ui_dialog_sort_criteria
     FsUi_Sort_Created,
 };
 
-[[maybe_unused]]
 static void _fs_ui_dialog_sort_items(fs_ui_dialog *diag, int criteria, bool ascending = true)
 {
     // TODO: implement
 
     diag->last_sort_criteria  = criteria;
     diag->last_sort_ascending = ascending;
+}
+
+static inline ImVec2 floor(float x, float y)
+{
+    return ImVec2((int)x, (int)y);
+}
+
+static inline ImVec2 floor(ImVec2 v)
+{
+    return ImVec2((int)v.x, (int)v.y);
+}
+
+static void _fs_ui_render_filesystem_type(ImDrawList *lst, fs::filesystem_type type, float size, ImU32 color)
+{
+    ImVec2 p0 = ImGui::GetCursorScreenPos() + ImVec2(0.5f, 0.5f);
+    const float factor = 0.2f;
+    float thickness = (int)(size / 20.f);
+
+    if (thickness < 1.f)
+        thickness = 1.f;
+
+    switch (type)
+    {
+    case fs::filesystem_type::Directory:
+    {
+        p0 += ImVec2((int)(-size * factor * 0.25f), (int)(size * factor * 0.3f));
+        // Draw a folder
+        const auto tl  = p0 + floor(size * (factor),            size * (factor * 2.f));
+        const auto m1  = p0 + floor(size * (factor * 2.f),     size * (factor * 2.f));
+        const auto m2  = p0 + floor(size * (factor * 3.f),     size * (factor * 1.0f));
+        const auto tr  = p0 + floor(size * (1 - factor * 0.5f), size * (factor * 1.0f));
+        const auto tr2 = p0 + floor(size * (1 - factor * 0.5f), size * (factor * 2.0f));
+        const auto br  = p0 + floor(size * (1 - factor * 0.5f), size * (1 - factor * 0.8f));
+        const auto bl  = p0 + floor(size * (factor),            size * (1 - factor * 0.8f));
+
+        lst->PathLineTo(tl);
+        lst->PathLineTo(tr2);
+        lst->PathLineTo(br);
+        lst->PathLineTo(bl);
+        lst->PathLineTo(tl);
+        lst->PathStroke(color, 0, thickness);
+
+        lst->PathLineTo(m1);
+        lst->PathLineTo(m2);
+        lst->PathLineTo(tr);
+        lst->PathLineTo(tr2);
+        lst->PathLineTo(m1);
+        lst->PathFillConvex(color);
+
+        // extra "file"
+        const auto ftl = p0 + floor(size * (factor),            size * (factor * 0.5f));
+        const auto ftr = p0 + floor(size * (factor * 2.5f),     size * (factor * 0.5f));
+
+        lst->PathLineTo(tl);
+        lst->PathLineTo(ftl);
+        lst->PathLineTo(ftr);
+        lst->PathLineTo(m2);
+        lst->PathStroke(color, 0, thickness);
+        break;
+    }
+    case fs::filesystem_type::Symlink: 
+        // TODO: draw an arrow or something
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::Text("->"); 
+        ImGui::PopStyleColor();
+        break;
+    case fs::filesystem_type::File:
+    {
+        // Draw a file icon
+        const auto tl  = p0 + floor(size * (factor),         size * (factor * 0.5f));
+        const auto tr1 = p0 + floor(size * (1 - factor * 2), size * (factor * 0.5f));
+        const auto tr2 = p0 + floor(size * (1 - factor),     size * (factor * 1.5f));
+        const auto trc = p0 + floor(size * (1 - factor * 2), size * (factor * 1.5f));
+        const auto br  = p0 + floor(size * (1 - factor),     size * (1 - factor * 0.5f));
+        const auto bl  = p0 + floor(size * (factor),         size * (1 - factor * 0.5f));
+
+        lst->PathLineTo(tr1 + ImVec2(0, 0.5f));
+        lst->PathLineTo(tr2);
+        lst->PathStroke(color, 0, thickness);
+
+        lst->PathLineTo(tr2);
+        lst->PathLineTo(br);
+        lst->PathLineTo(bl);
+        lst->PathLineTo(tl);
+        lst->PathLineTo(tr1);
+        lst->PathLineTo(trc);
+        lst->PathLineTo(tr2);
+        lst->PathStroke(color, 0, thickness);
+        break;
+    }
+    default: 
+        ImGui::PushStyleColor(ImGuiCol_Text, color);
+        ImGui::Text("?");
+        ImGui::PopStyleColor();
+        break;
+    }
+}
+
+static void _format_date(char *buf, s64 buf_size, timespan *sp)
+{
+    if (sp == nullptr || sp->seconds < 0)
+    {
+        copy_string("?", buf);
+        return;
+    }
+
+    struct tm t;
+
+    tzset();
+
+    if (localtime_r((time_t*)sp, &t) == nullptr)
+    {
+        copy_string("?", buf);
+        return;
+    }
+
+    if (strftime(buf, buf_size, "%F %T", &t) <= 0)
+    {
+        copy_string("?", buf);
+        return;
+    }
 }
 
 static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr, error *err = nullptr)
@@ -263,7 +384,8 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
         }
 
         // Modified & Created date
-        // TODO: implement
+        _format_date(ditem->modified_label, fs_ui_dialog_label_size, &ditem->modified);
+        _format_date(ditem->created_label,  fs_ui_dialog_label_size, &ditem->created);
     }
 
     if (err && err->error_code != 0)
@@ -281,6 +403,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
     ImGuiStorage *storage = ImGui::GetStateStorage(); (void)storage;
+    ImGuiStyle *style = &g.Style;
 
     (void)label;
     (void)out_filebuf;
@@ -323,6 +446,10 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     ImGui::PushItemWidth(-1);
     ImGui::InputText("##input_bar", input_bar_content, 4095);
+
+    const float font_size = ImGui::GetFontSize();
+    const float bottom_padding = -100; // TODO: calculate with style, height of button + separator, etc
+    ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
     
     const int table_flags = ImGuiTableFlags_ScrollY
                           | ImGuiTableFlags_ScrollX
@@ -331,31 +458,27 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                           | ImGuiTableFlags_BordersOuterH
                           | ImGuiTableFlags_RowBg
                           | ImGuiTableFlags_Resizable;
-    const float bottom_padding = -100; // TODO: calculate with style, height of button + separator, etc
+
     if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
     {
         // Display headers so we can inspect their interaction with borders
         // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
         ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
-        ImGui::TableSetupColumn("Type");
+        ImGui::TableSetupColumn("");
         ImGui::TableSetupColumn("Name", ImGuiTableColumnFlags_WidthStretch);
         ImGui::TableSetupColumn("Size");
         ImGui::TableSetupColumn("Modified");
         ImGui::TableSetupColumn("Created");
         ImGui::TableHeadersRow();
+        ImDrawList *draw_list = ImGui::GetWindowDrawList();
 
         for_array(item, &diag->items)
         {
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
 
-            switch (item->type)
-            {
-                case fs::filesystem_type::Directory: ImGui::Text("D"); break;
-                case fs::filesystem_type::File:      ImGui::Text("F"); break;
-                case fs::filesystem_type::Symlink:   ImGui::Text("L"); break;
-                default:                             ImGui::Text("?"); break;
-            }
+            _fs_ui_render_filesystem_type(draw_list, item->type, font_size, font_color);
+            ImGui::Dummy(ImVec2(font_size, 0));
 
             ImGui::TableSetColumnIndex(1);
             ImGui::Text("%s", item->path.data);
@@ -367,10 +490,10 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 ImGui::SetTooltip("%s", item->size_accurate_label);
 
             ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%d", 0);
+            ImGui::Text("%s", item->modified_label);
 
             ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%d", 0);
+            ImGui::Text("%s", item->created_label);
         }
 
         ImGui::EndTable();
