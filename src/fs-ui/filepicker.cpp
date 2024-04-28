@@ -1,6 +1,17 @@
 
+// TODO: filter (by extension / filetype)
+// TODO: search (within 1 folder, not recursively; jump to search result)
+// TODO: global settings (editable bar, show_hidden)
+// TODO: back/forward
+// TODO: alt keys for navigation (alt left: back, alt right: forward, alt up: directory up)
+// TODO: keyboard keys (enter for confirm in table, f4 for navigation focus)
+
+
+// future features:
+// TODO: multiple selection
+
 #define IMGUI_DEFINE_MATH_OPERATORS 1
-#include <time.h> // how sad
+#include <time.h> // how sad, used for modified/created timestamp formatting
 #include "imgui_internal.h"
 
 #include "shl/print.hpp"
@@ -43,8 +54,6 @@ struct fs_ui_dialog_settings
 {
     ImGuiID id;
     string last_directory;
-    // TODO: implement bool show_hidden
-    // TODO: implement bool edit_bar
 };
 
 static void free(fs_ui_dialog_settings *settings)
@@ -53,6 +62,7 @@ static void free(fs_ui_dialog_settings *settings)
     free(&settings->last_directory);
 }
 
+// TODO: global settings? with show_hidden, edit_bar
 static hash_table<ImGuiID, fs_ui_dialog_settings> _ini_dialog_settings;
 
 static void _fs_ui_ClearAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler)
@@ -97,13 +107,6 @@ static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
     }
 }
 
-/*
-static void _fs_ui_ApplyAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler)
-{
-    tprint("ApplyAll\n");
-}
-*/
-
 static void _fs_ui_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf)
 {
     // tprint("WriteAll\n");
@@ -128,7 +131,6 @@ void FsUi::Init()
     ini_handler.ClearAllFn = _fs_ui_ClearAllFn;
     ini_handler.ReadOpenFn = _fs_ui_ReadOpenFn;
     ini_handler.ReadLineFn = _fs_ui_ReadLineFn;
-    // ini_handler.ApplyAllFn = _fs_ui_ApplyAllFn;
     ini_handler.WriteAllFn = _fs_ui_WriteAllFn;
     ImGui::AddSettingsHandler(&ini_handler);
 }
@@ -141,8 +143,10 @@ void FsUi::Exit()
 #define fs_ui_dialog_label_size 32
 struct fs_ui_dialog_item
 {
+    // properties
     fs::path path;
     fs::filesystem_type type;
+    fs::filesystem_type symlink_target_type; // only used by symlinks, obviously
 
     s64  size; // item count for directories, bytes for files / symlinks
     timespan modified;
@@ -152,6 +156,9 @@ struct fs_ui_dialog_item
     char size_accurate_label[fs_ui_dialog_label_size];
     char modified_label[fs_ui_dialog_label_size];
     char created_label[fs_ui_dialog_label_size];
+
+    // settings / interaction data
+    // bool multi_selected; // when multiple items can be selected, this is set per item
 };
 
 static void free(fs_ui_dialog_item *item)
@@ -163,21 +170,28 @@ struct fs_ui_dialog
 {
     // ImGuiID id;
     fs::path current_dir;
+    bool current_dir_ok;
+    string navigation_error_message;
 
     array<fs_ui_dialog_item> items;
-    bool show_hidden;
+    s64 single_selection_index;
+    bool show_hidden; // TODO: move to global settings
     int  last_sort_criteria;
     bool last_sort_ascending;
 
     fs::path _it_path; // used during iteration, constantly overwritten
+
+    char selection_buffer[255];
 };
 
 static void init(fs_ui_dialog *diag)
 {
     fill_memory(diag, 0);
+    diag->single_selection_index = -1;
     diag->last_sort_ascending = true;
 
     fs::init(&diag->current_dir);
+    init(&diag->navigation_error_message);
     init(&diag->items);
 
     fs::init(&diag->_it_path);
@@ -186,7 +200,9 @@ static void init(fs_ui_dialog *diag)
 static void free(fs_ui_dialog *diag)
 {
     fs::free(&diag->current_dir);
+    free(&diag->navigation_error_message);
     free<true>(&diag->items);
+    fs::free(&diag->_it_path);
 }
 
 // must be same order as the table
@@ -209,9 +225,11 @@ static int _compare_item_type_descending(const fs_ui_dialog_item *lhs, const fs_
     return -_compare_item_type_ascending(lhs, rhs);
 }
 
+#define _is_directory(X) ((X)->type == fs::filesystem_type::Directory || ((X)->type == fs::filesystem_type::Symlink && (X)->symlink_target_type == fs::filesystem_type::Directory))
+
 #define sort_directories_first(lhs, rhs)\
-    if      (lhs->type == fs::filesystem_type::Directory && rhs->type != fs::filesystem_type::Directory) return -1;\
-    else if (rhs->type == fs::filesystem_type::Directory && lhs->type != fs::filesystem_type::Directory) return 1;
+    if      (_is_directory(lhs) && !_is_directory(rhs)) return -1;\
+    else if (_is_directory(rhs) && !_is_directory(lhs)) return 1;
 
 static int _compare_item_name_ascending(const fs_ui_dialog_item *lhs, const fs_ui_dialog_item *rhs)
 {
@@ -368,6 +386,7 @@ static void _fs_ui_render_filesystem_type(ImDrawList *lst, fs::filesystem_type t
         lst->PathLineTo(ftr);
         lst->PathLineTo(m2);
         lst->PathStroke(color, 0, thickness);
+        ImGui::Dummy(ImVec2(size, 0));
         break;
     }
     case fs::filesystem_type::Symlink: 
@@ -398,6 +417,7 @@ static void _fs_ui_render_filesystem_type(ImDrawList *lst, fs::filesystem_type t
         lst->PathLineTo(trc);
         lst->PathLineTo(tr2);
         lst->PathStroke(color, 0, thickness);
+        ImGui::Dummy(ImVec2(size, 0));
         break;
     }
     default: 
@@ -445,10 +465,10 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
     free<true>(&diag->items);
     init(&diag->items);
 
-    if (err) err->error_code = 0;
+    error _err{};
 
     const s64 base_size = it->size;
-    for_path(item, &diag->current_dir, fs::iterate_option::QueryType, err)
+    for_path(item, &diag->current_dir, fs::iterate_option::QueryType, &_err)
     {
         it->size = base_size;
         it->data[base_size] = '\0';
@@ -461,8 +481,11 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
         ditem->type = item->type;
 
         // Gather filesystem information
+        if (item->type == fs::filesystem_type::Symlink)
+            fs::get_filesystem_type(it, &ditem->symlink_target_type);
 
-        if (item->type == fs::filesystem_type::Directory)
+        // _is_directory also checks for symlinks targeting directories
+        if (_is_directory(ditem))
             ditem->size = fs::get_children_count(it);
 #if Windows
         // TODO: implement
@@ -476,7 +499,7 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
             continue;
         }
 
-        if (item->type != fs::filesystem_type::Directory)
+        if (!_is_directory(ditem))
             ditem->size = info.stx_size;
 
         ditem->modified.seconds     = info.stx_mtime.tv_sec;
@@ -492,7 +515,7 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
             copy_string("?", ditem->size_label);
         else
         {
-            if (item->type == fs::filesystem_type::Directory)
+            if (_is_directory(ditem))
                 format(ditem->size_label, fs_ui_dialog_label_size, "% items", ditem->size);
             else
             {
@@ -528,14 +551,21 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
         _format_date(ditem->created_label,  fs_ui_dialog_label_size, &ditem->created);
     }
 
-    if (err && err->error_code != 0)
+    if (err)
+        *err = _err;
+
+    diag->current_dir_ok = _err.error_code == 0;
+
+    if (_err.error_code != 0)
+    {
+        set_string(&diag->navigation_error_message, _err.what);
         return false;
+    }
 
     _fs_ui_dialog_sort_items(diag, diag->last_sort_criteria, diag->last_sort_ascending);
 
     return true;
 }
-
 
 namespace FsUi
 {
@@ -580,93 +610,191 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         else
             fs::set_path(&diag->current_dir, to_const_string(settings->last_directory));
 
-        copy_string(diag->current_dir.data, input_bar_content, 4095);
-
         _fs_ui_dialog_load_path(diag);
+        copy_string(diag->current_dir.data, input_bar_content, 4095);
     }
 
-    ImGui::PushItemWidth(-100);
-    ImGui::InputText("##input_bar", input_bar_content, 4095);
+    if (ImGui::Button("Home"))
+    {
+        fs::get_home_path(&diag->current_dir);
+        _fs_ui_dialog_load_path(diag);
+        copy_string(diag->current_dir.data, input_bar_content, 4095);
+    }
+
+    ImGui::SameLine();
+
+    /* TODO: implement stack
+    if (ImGui::Button("<-"))
+    {}
+    ImGui::SameLine();
+
+    if (ImGui::Button("->"))
+    {}
+    */
+
+    ImGui::SameLine();
+
+    bool navigate_to_written_dir = false;
+
+    // TODO: completion / suggestions
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.75f);
+    navigate_to_written_dir = ImGui::InputText("##input_bar", input_bar_content, 4095, ImGuiInputTextFlags_EnterReturnsTrue);
+    
+    ImGui::SameLine();
+
+    if (ImGui::Button("^"))
+    {
+        auto parent = fs::parent_path_segment(&diag->current_dir);
+        
+        if (parent.size > 0)
+        {
+            diag->current_dir.size = parent.size;
+            diag->current_dir.data[parent.size] = '\0';
+            _fs_ui_dialog_load_path(diag);
+            copy_string(diag->current_dir.data, input_bar_content, 4095);
+        }
+    }
 
     /*
     TODO: edit button for switching between writing and clicking path components
     ImGui::SameLine();
     ImGui::Button("Edit");
-
-    TODO: go button to submit written text
-    ImGui::SameLine();
-    ImGui::Button("Go");
     */
+
+    ImGui::SameLine();
+    navigate_to_written_dir |= ImGui::Button("Go");
+
+    if (navigate_to_written_dir)
+    {
+        fs::set_path(&diag->current_dir, input_bar_content);
+        _fs_ui_dialog_load_path(diag);
+    }
 
     ImGui::Checkbox("show hidden", &diag->show_hidden);
 
     const float font_size = ImGui::GetFontSize();
     const float bottom_padding = -100; // TODO: calculate with style, height of button + separator, etc
     ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
-    
-    const int table_flags = ImGuiTableFlags_ScrollY
-                          | ImGuiTableFlags_ScrollX
-                          | ImGuiTableFlags_NoBordersInBody
-                          | ImGuiTableFlags_BordersOuterV
-                          | ImGuiTableFlags_BordersOuterH
-                          | ImGuiTableFlags_RowBg
-                          | ImGuiTableFlags_Resizable
-                          | ImGuiTableFlags_Sortable
-                          // | ImGuiTableFlags_SortMulti
-                          ;
 
-    if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
+    bool selected = false;
+
+    if (!diag->current_dir_ok)
     {
-        // Display headers so we can inspect their interaction with borders
-        // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
-        ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
-        ImGui::TableSetupColumn(""/*type*/, ImGuiTableColumnFlags_DefaultSort);
-        ImGui::TableSetupColumn("Name",     ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Size",     ImGuiTableColumnFlags_DefaultSort);
-        ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_DefaultSort);
-        ImGui::TableSetupColumn("Created",  ImGuiTableColumnFlags_DefaultSort);
-        ImGui::TableHeadersRow();
-
-        if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs())
-        if (sort_specs->SpecsDirty)
+        if (ImGui::BeginChild("##empty_or_not_found", ImVec2(-0, bottom_padding)))
         {
-            _fs_ui_sort_by_imgui_spec(diag, sort_specs);
-            sort_specs->SpecsDirty = false;
+            ImGui::Text("%s\n", diag->navigation_error_message.data);
+            ImGui::EndChild();
         }
+    }
+    else
+    {
+        const int table_flags = ImGuiTableFlags_ScrollY
+                              | ImGuiTableFlags_ScrollX
+                              | ImGuiTableFlags_NoBordersInBody
+                              | ImGuiTableFlags_BordersOuterV
+                              | ImGuiTableFlags_BordersOuterH
+                              | ImGuiTableFlags_RowBg
+                              | ImGuiTableFlags_Resizable
+                              | ImGuiTableFlags_Sortable
+                              // | ImGuiTableFlags_SortMulti
+                              ;
 
-        ImDrawList *draw_list = ImGui::GetWindowDrawList();
+        s64 double_click_index = -1;
 
-        for_array(item, &diag->items)
+        ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(style->CellPadding.x, 3));
+        if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
         {
-            if (!diag->show_hidden && item->path.data[0] == '.')
-                continue;
+            // Display headers so we can inspect their interaction with borders
+            // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
+            ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
+            ImGui::TableSetupColumn(""/*type*/, ImGuiTableColumnFlags_DefaultSort);
+            ImGui::TableSetupColumn("Name",     ImGuiTableColumnFlags_DefaultSort | ImGuiTableColumnFlags_WidthStretch);
+            ImGui::TableSetupColumn("Size",     ImGuiTableColumnFlags_DefaultSort);
+            ImGui::TableSetupColumn("Modified", ImGuiTableColumnFlags_DefaultSort);
+            ImGui::TableSetupColumn("Created",  ImGuiTableColumnFlags_DefaultSort);
+            ImGui::TableHeadersRow();
 
-            ImGui::TableNextRow();
-            ImGui::TableSetColumnIndex(0);
+            if (ImGuiTableSortSpecs* sort_specs = ImGui::TableGetSortSpecs())
+            if (sort_specs->SpecsDirty)
+            {
+                _fs_ui_sort_by_imgui_spec(diag, sort_specs);
+                sort_specs->SpecsDirty = false;
+            }
 
-            _fs_ui_render_filesystem_type(draw_list, item->type, font_size, font_color);
-            ImGui::Dummy(ImVec2(font_size, 0));
+            ImDrawList *draw_list = ImGui::GetWindowDrawList();
 
-            ImGui::TableSetColumnIndex(1);
-            ImGui::Text("%s", item->path.data);
+            for_array(i, item, &diag->items)
+            {
+                if (!diag->show_hidden && item->path.data[0] == '.')
+                    continue;
 
-            // Size
-            ImGui::TableSetColumnIndex(2);
-            ImGui::Text("%s", item->size_label);
-            if (item->size_accurate_label[0] && ImGui::IsItemHovered())
-                ImGui::SetTooltip("%s", item->size_accurate_label);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
 
-            ImGui::TableSetColumnIndex(3);
-            ImGui::Text("%s", item->modified_label);
+                _fs_ui_render_filesystem_type(draw_list, item->type, font_size, font_color);
 
-            ImGui::TableSetColumnIndex(4);
-            ImGui::Text("%s", item->created_label);
+                ImGui::TableNextColumn();
+                // TODO: if (single/multi select ...)
+                if (ImGui::Selectable(item->path.data, diag->single_selection_index == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
+                {
+                    diag->single_selection_index = i;
+                    copy_string(item->path.data, diag->selection_buffer, 255);
+
+                    if (ImGui::IsMouseDoubleClicked(0))
+                        double_click_index = i;
+                }
+
+                // Size
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", item->size_label);
+                if (item->size_accurate_label[0] && ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", item->size_accurate_label);
+
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", item->modified_label);
+
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", item->created_label);
+            }
+
+            ImGui::EndTable();
         }
+        ImGui::PopStyleVar();
 
-        ImGui::EndTable();
+        if (double_click_index >= 0)
+        {
+            assert(double_click_index < diag->items.size);
+            fs_ui_dialog_item *item = diag->items.data + double_click_index;
+
+            // Directories shall always be navigated into with double click,
+            // never opened.
+            if (_is_directory(item))
+            {
+                diag->selection_buffer[0] = '\0';
+                fs::append_path(&diag->current_dir, item->path);
+                _fs_ui_dialog_load_path(diag);
+                copy_string(diag->current_dir.data, input_bar_content, 4095);
+            }
+            else
+            {
+                // TODO: check filter
+                selected = true;
+            }
+        }
     }
 
-    bool selected = ImGui::Button("Select");
+    // TODO: if multiple, display number of items instead
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+    ImGui::InputText("##selection", diag->selection_buffer, 255);
+    ImGui::SameLine();
+
+    // TODO: if multiple
+    // TODO: must exist
+    bool has_selection = diag->selection_buffer[0] != '\0';
+
+    ImGui::BeginDisabled(!has_selection);
+    selected |= ImGui::Button("Select");
+    ImGui::EndDisabled();
 
     ImGui::SameLine();
 
@@ -678,6 +806,14 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
         if (selected)
         {
+            // assemble the full path
+            fs::set_path(&diag->_it_path, diag->current_dir);
+            fs::append_path(&diag->_it_path, diag->selection_buffer);
+
+            // copy to output
+            copy_string(diag->_it_path.data, out_filebuf, filebuf_size);
+
+            // save settings
             fs_ui_dialog_settings *settings = search(&_ini_dialog_settings, &id);
 
             assert(settings != nullptr);
