@@ -2,13 +2,12 @@
 // TODO: filter (by extension / filetype)
 // TODO: search (within 1 folder, not recursively; jump to search result)
 // TODO: global settings (editable bar, show_hidden)
-// TODO: back/forward
 // TODO: alt keys for navigation (alt left: back, alt right: forward, alt up: directory up)
-// TODO: keyboard keys (enter for confirm in table, f4 for navigation focus)
 
 
 // future features:
 // TODO: multiple selection
+// TODO: pins
 
 #define IMGUI_DEFINE_MATH_OPERATORS 1
 #include <time.h> // how sad, used for modified/created timestamp formatting
@@ -169,18 +168,22 @@ static void free(fs_ui_dialog_item *item)
 struct fs_ui_dialog
 {
     // ImGuiID id;
+    // navigation
     fs::path current_dir;
     bool current_dir_ok;
     string navigation_error_message;
+    array<fs::path> back_stack;
+    array<fs::path> forward_stack;
 
+    // items, display and sorting
     array<fs_ui_dialog_item> items;
     s64 single_selection_index;
     bool show_hidden; // TODO: move to global settings
     int  last_sort_criteria;
     bool last_sort_ascending;
 
+    // etc
     fs::path _it_path; // used during iteration, constantly overwritten
-
     char selection_buffer[255];
 };
 
@@ -192,6 +195,8 @@ static void init(fs_ui_dialog *diag)
 
     fs::init(&diag->current_dir);
     init(&diag->navigation_error_message);
+    init(&diag->back_stack);
+    init(&diag->forward_stack);
     init(&diag->items);
 
     fs::init(&diag->_it_path);
@@ -201,6 +206,9 @@ static void free(fs_ui_dialog *diag)
 {
     fs::free(&diag->current_dir);
     free(&diag->navigation_error_message);
+    free<true>(&diag->back_stack);
+    free<true>(&diag->forward_stack);
+
     free<true>(&diag->items);
     fs::free(&diag->_it_path);
 }
@@ -567,6 +575,39 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
     return true;
 }
 
+static void _history_push(array<fs::path> *stack, fs::path *path)
+{
+    if (path == nullptr || path->data == nullptr || is_blank(path->data))
+        return;
+
+    if (stack->size > 0 && compare_strings(path->data, (end(stack)-1)->data) == 0)
+        // don't add if its already at the end of the stack
+        return;
+
+    fs::path *e = add_at_end(stack);
+    init(e);
+    fs::set_path(e, path);
+}
+
+static void _history_pop(array<fs::path> *stack, fs::path *out)
+{
+    if (stack->size <= 0)
+        return;
+
+    fs::path *ret = end(stack) - 1;
+    fs::set_path(out, ret);
+    fs::free(ret);
+    remove_from_end(stack);
+}
+
+static void _history_clear(array<fs::path> *stack)
+{
+    for_array(p, stack)
+        fs::free(p);
+
+    clear(stack);
+}
+
 namespace FsUi
 {
 bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter = nullptr, int flags = 0)
@@ -586,6 +627,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     const ImGuiID id = window->GetID(label);
     static char input_bar_content[4096] = {0};
 
+    // SETUP
     fs_ui_dialog *diag = (fs_ui_dialog*)storage->GetVoidPtr(id);
 
     if (diag == nullptr)
@@ -605,6 +647,9 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             init(&settings->last_directory);
         }
 
+        _history_push(&diag->back_stack, &diag->current_dir);
+        _history_clear(&diag->forward_stack);
+
         if (is_blank(settings->last_directory))
             fs::get_current_path(&diag->current_dir);
         else
@@ -616,6 +661,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     if (ImGui::Button("Home"))
     {
+        _history_push(&diag->back_stack, &diag->current_dir);
+        _history_clear(&diag->forward_stack);
         fs::get_home_path(&diag->current_dir);
         _fs_ui_dialog_load_path(diag);
         copy_string(diag->current_dir.data, input_bar_content, 4095);
@@ -623,21 +670,42 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     ImGui::SameLine();
 
-    /* TODO: implement stack
+    // HISTORY
+    ImGui::BeginDisabled(diag->back_stack.size <= 0);
     if (ImGui::Button("<-"))
-    {}
+    {
+        _history_push(&diag->forward_stack, &diag->current_dir);
+        _history_pop(&diag->back_stack, &diag->current_dir);
+
+        _fs_ui_dialog_load_path(diag);
+        copy_string(diag->current_dir.data, input_bar_content, 4095);
+    }
+    ImGui::EndDisabled();
+
     ImGui::SameLine();
 
+    ImGui::BeginDisabled(diag->forward_stack.size <= 0);
     if (ImGui::Button("->"))
-    {}
-    */
+    {
+        _history_push(&diag->back_stack, &diag->current_dir);
+        _history_pop(&diag->forward_stack, &diag->current_dir);
+
+        _fs_ui_dialog_load_path(diag);
+        copy_string(diag->current_dir.data, input_bar_content, 4095);
+    }
+    ImGui::EndDisabled();
 
     ImGui::SameLine();
 
+    // INPUT BAR
     bool navigate_to_written_dir = false;
 
     // TODO: completion / suggestions
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.75f);
+
+    if (ImGui::IsKeyPressed(ImGuiKey_F4))
+        ImGui::SetKeyboardFocusHere();
+
     navigate_to_written_dir = ImGui::InputText("##input_bar", input_bar_content, 4095, ImGuiInputTextFlags_EnterReturnsTrue);
     
     ImGui::SameLine();
@@ -648,6 +716,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         
         if (parent.size > 0)
         {
+            _history_push(&diag->back_stack, &diag->current_dir);
+            _history_clear(&diag->forward_stack);
             diag->current_dir.size = parent.size;
             diag->current_dir.data[parent.size] = '\0';
             _fs_ui_dialog_load_path(diag);
@@ -666,6 +736,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     if (navigate_to_written_dir)
     {
+        _history_push(&diag->back_stack, &diag->current_dir);
+        _history_clear(&diag->forward_stack);
         fs::set_path(&diag->current_dir, input_bar_content);
         _fs_ui_dialog_load_path(diag);
     }
@@ -699,7 +771,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                               // | ImGuiTableFlags_SortMulti
                               ;
 
-        s64 double_click_index = -1;
+        s64 navigate_into_index = -1;
 
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(style->CellPadding.x, 3));
         if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
@@ -740,8 +812,10 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                     diag->single_selection_index = i;
                     copy_string(item->path.data, diag->selection_buffer, 255);
 
-                    if (ImGui::IsMouseDoubleClicked(0))
-                        double_click_index = i;
+                    bool navigate_into = ImGui::IsMouseDoubleClicked(0);
+                    navigate_into     |= ImGui::IsKeyDown(ImGuiKey_Enter);
+                    if (navigate_into)
+                        navigate_into_index = i;
                 }
 
                 // Size
@@ -761,16 +835,19 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         }
         ImGui::PopStyleVar();
 
-        if (double_click_index >= 0)
+        if (navigate_into_index >= 0)
         {
-            assert(double_click_index < diag->items.size);
-            fs_ui_dialog_item *item = diag->items.data + double_click_index;
+            assert(navigate_into_index < diag->items.size);
+            fs_ui_dialog_item *item = diag->items.data + navigate_into_index;
 
-            // Directories shall always be navigated into with double click,
+            // Directories shall always be navigated into with double click / enter,
             // never opened.
             if (_is_directory(item))
             {
                 diag->selection_buffer[0] = '\0';
+
+                _history_push(&diag->back_stack, &diag->current_dir);
+                _history_clear(&diag->forward_stack);
                 fs::append_path(&diag->current_dir, item->path);
                 _fs_ui_dialog_load_path(diag);
                 copy_string(diag->current_dir.data, input_bar_content, 4095);
