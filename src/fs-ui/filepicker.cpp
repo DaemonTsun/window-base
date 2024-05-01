@@ -2,7 +2,6 @@
 // TODO: filter (by extension / filetype)
 // TODO: search (within 1 folder, not recursively; jump to search result)
 // TODO: global settings (editable bar, show_hidden)
-// TODO: alt keys for navigation (alt left: back, alt right: forward, alt up: directory up)
 
 
 // future features:
@@ -45,6 +44,44 @@ static int timespan_compare(const timespan *lhs, const timespan *rhs)
     if (lhs->nanoseconds > rhs->nanoseconds) return  1;
 
     return 0;
+}
+
+// why does ImGui not support this again...?
+bool ButtonSlice(const char* label, const char *label_end, const ImVec2& size_arg, ImGuiButtonFlags flags)
+{
+    using namespace ImGui;
+    ImGuiWindow* window = GetCurrentWindow();
+    if (window->SkipItems)
+        return false;
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiStyle& style = g.Style;
+    const ImGuiID id = window->GetID(label);
+    const ImVec2 label_size = CalcTextSize(label, label_end, true);
+
+    ImVec2 pos = window->DC.CursorPos;
+    if ((flags & ImGuiButtonFlags_AlignTextBaseLine) && style.FramePadding.y < window->DC.CurrLineTextBaseOffset) // Try to vertically align buttons that are smaller/have no padding so that text baseline matches (bit hacky, since it shouldn't be a flag)
+        pos.y += window->DC.CurrLineTextBaseOffset - style.FramePadding.y;
+    ImVec2 size = CalcItemSize(size_arg, label_size.x + style.FramePadding.x * 2.0f, label_size.y + style.FramePadding.y * 2.0f);
+
+    const ImRect bb(pos, pos + size);
+    ItemSize(size, style.FramePadding.y);
+    if (!ItemAdd(bb, id))
+        return false;
+
+    bool hovered, held;
+    bool pressed = ButtonBehavior(bb, id, &hovered, &held, flags);
+
+    // Render
+    const ImU32 col = GetColorU32((held && hovered) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
+    RenderNavHighlight(bb, id);
+    RenderFrame(bb.Min, bb.Max, col, true, style.FrameRounding);
+
+    if (g.LogEnabled)
+        LogSetNextTextDecoration("[", "]");
+    RenderTextClipped(bb.Min + style.FramePadding, bb.Max - style.FramePadding, label, label_end, &label_size, style.ButtonTextAlign, &bb);
+    
+    return pressed;
 }
 
 // fsui
@@ -170,6 +207,8 @@ struct fs_ui_dialog
     // ImGuiID id;
     // navigation
     fs::path current_dir;
+    array<fs::const_fs_string> current_dir_segments;
+    bool editing_bar;
     bool current_dir_ok;
     string navigation_error_message;
     array<fs::path> back_stack;
@@ -461,13 +500,13 @@ static void _format_date(char *buf, s64 buf_size, timespan *sp)
     }
 }
 
-static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr, error *err = nullptr)
+static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag)
 {
-    if (path != nullptr)
-        fs::weakly_canonical_path(path, &diag->current_dir);
-
     fs::path *it = &diag->_it_path;
     fs::set_path(it, &diag->current_dir);
+
+    fs::path_segments(&diag->current_dir, &diag->current_dir_segments);
+    diag->single_selection_index = -1;
 
     // TODO: reuse item memory
     free<true>(&diag->items);
@@ -500,7 +539,7 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
 #else // Linux
         fs::filesystem_info info{};
 
-        if (!fs::get_filesystem_info(it, &info, true, FS_QUERY_DEFAULT_FLAGS, err))
+        if (!fs::get_filesystem_info(it, &info, true, FS_QUERY_DEFAULT_FLAGS))
         {
             free(ditem);
             remove_from_end(&diag->items);
@@ -559,9 +598,6 @@ static bool _fs_ui_dialog_load_path(fs_ui_dialog *diag, fs::path *path = nullptr
         _format_date(ditem->created_label,  fs_ui_dialog_label_size, &ditem->created);
     }
 
-    if (err)
-        *err = _err;
-
     diag->current_dir_ok = _err.error_code == 0;
 
     if (_err.error_code != 0)
@@ -617,6 +653,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGuiStorage *storage = ImGui::GetStateStorage(); (void)storage;
     ImGuiStyle *style = &g.Style;
 
+    bool alt = ImGui::GetIO().KeyMods & ImGuiModFlags_Alt;
+
     (void)label;
     (void)out_filebuf;
     (void)filebuf_size;
@@ -659,8 +697,20 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         copy_string(diag->current_dir.data, input_bar_content, 4095);
     }
 
-    if (ImGui::Button("Home"))
+    if (ImGui::IsKeyPressed(ImGuiKey_F5))
     {
+        // refresh
+        _fs_ui_dialog_load_path(diag);
+        copy_string(diag->current_dir.data, input_bar_content, 4095);
+    }
+
+    // HOME
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 0));
+    if (ImGui::Button("@"))
+    {
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Home");
+
         _history_push(&diag->back_stack, &diag->current_dir);
         _history_clear(&diag->forward_stack);
         fs::get_home_path(&diag->current_dir);
@@ -671,8 +721,9 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGui::SameLine();
 
     // HISTORY
-    ImGui::BeginDisabled(diag->back_stack.size <= 0);
-    if (ImGui::Button("<-"))
+    bool can_back = diag->back_stack.size > 0;
+    ImGui::BeginDisabled(!can_back);
+    if (ImGui::ArrowButton("##history_back", ImGuiDir_Left) || (can_back && alt && ImGui::IsKeyPressed(ImGuiKey_LeftArrow, false)))
     {
         _history_push(&diag->forward_stack, &diag->current_dir);
         _history_pop(&diag->back_stack, &diag->current_dir);
@@ -684,8 +735,9 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     ImGui::SameLine();
 
-    ImGui::BeginDisabled(diag->forward_stack.size <= 0);
-    if (ImGui::Button("->"))
+    bool can_forward = diag->forward_stack.size > 0;
+    ImGui::BeginDisabled(!can_forward);
+    if (ImGui::ArrowButton("##history_forward", ImGuiDir_Right) || (can_forward && alt && ImGui::IsKeyPressed(ImGuiKey_RightArrow, false)))
     {
         _history_push(&diag->back_stack, &diag->current_dir);
         _history_pop(&diag->forward_stack, &diag->current_dir);
@@ -694,23 +746,11 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         copy_string(diag->current_dir.data, input_bar_content, 4095);
     }
     ImGui::EndDisabled();
-
-    ImGui::SameLine();
-
-    // INPUT BAR
-    bool navigate_to_written_dir = false;
-
-    // TODO: completion / suggestions
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.75f);
-
-    if (ImGui::IsKeyPressed(ImGuiKey_F4))
-        ImGui::SetKeyboardFocusHere();
-
-    navigate_to_written_dir = ImGui::InputText("##input_bar", input_bar_content, 4095, ImGuiInputTextFlags_EnterReturnsTrue);
     
     ImGui::SameLine();
 
-    if (ImGui::Button("^"))
+    // NAVIGATE UP
+    if (ImGui::ArrowButton("##go_up", ImGuiDir_Up) || (alt && ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)))
     {
         auto parent = fs::parent_path_segment(&diag->current_dir);
         
@@ -724,28 +764,97 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             copy_string(diag->current_dir.data, input_bar_content, 4095);
         }
     }
+    ImGui::PopStyleVar();
 
-    /*
-    TODO: edit button for switching between writing and clicking path components
-    ImGui::SameLine();
-    ImGui::Button("Edit");
-    */
+    // INPUT BAR
+    const float total_space = ImGui::GetContentRegionMaxAbs().x;
+    const float min_size_left = 200.f;
 
-    ImGui::SameLine();
-    navigate_to_written_dir |= ImGui::Button("Go");
-
-    if (navigate_to_written_dir)
+    if (!diag->editing_bar)
     {
-        _history_push(&diag->back_stack, &diag->current_dir);
-        _history_clear(&diag->forward_stack);
-        fs::set_path(&diag->current_dir, input_bar_content);
-        _fs_ui_dialog_load_path(diag);
-    }
+        // The editing bar
+        bool navigate_to_written_dir = false;
 
+        if (ImGui::IsKeyPressed(ImGuiKey_F4))
+            ImGui::SetKeyboardFocusHere();
+
+        ImGui::SameLine();
+
+        navigate_to_written_dir = ImGui::InputTextEx("##input_bar",
+                                                     nullptr,
+                                                     input_bar_content,
+                                                     4095,
+                                                     ImVec2(Max(10.f, total_space - min_size_left - window->DC.CursorPos.x), 0),
+                                                     ImGuiInputTextFlags_EnterReturnsTrue,
+                                                     nullptr,
+                                                     nullptr
+                                                     );
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("[-/-]"))
+            diag->editing_bar = !diag->editing_bar;
+
+        ImGui::SameLine();
+        navigate_to_written_dir |= ImGui::Button("Go");
+
+        if (navigate_to_written_dir)
+        {
+            _history_push(&diag->back_stack, &diag->current_dir);
+            _history_clear(&diag->forward_stack);
+
+            if (!is_blank(input_bar_content))
+                fs::set_path(&diag->current_dir, input_bar_content);
+
+            _fs_ui_dialog_load_path(diag);
+        }
+    }
+    else
+    {
+        // The segment click bar
+        ImGui::SameLine();
+
+        if (ImGui::BeginChild("##segment_click_bar", ImVec2(Max(10.f, total_space - min_size_left - window->DC.CursorPos.x), ImGui::GetFrameHeight()), 0, 0))
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style->ItemSpacing.x / 2, 0));
+            ImGui::PushStyleColor(ImGuiCol_Button, style->Colors[ImGuiCol_WindowBg]);
+
+            for_array(i, seg, &diag->current_dir_segments)
+            {
+                // (we skip the last entry, the button for the last entry does nothing)
+                if (ButtonSlice(seg->c_str, seg->c_str + seg->size, ImVec2(0, 0), 0) && i < diag->current_dir_segments.size - 1)
+                {
+                    s64 end = (seg->c_str + seg->size) - diag->current_dir.data;
+                    _history_push(&diag->back_stack, &diag->current_dir);
+                    _history_clear(&diag->forward_stack);
+
+                    diag->current_dir.size = end;
+                    diag->current_dir.data[end] = '\0';
+
+                    _fs_ui_dialog_load_path(diag);
+                    copy_string(diag->current_dir.data, input_bar_content, 4095);
+                }
+
+                ImGui::SameLine();
+            }
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar();
+
+            ImGui::EndChild();
+        }
+
+        ImGui::SameLine();
+
+        if (ImGui::Button("Edit"))
+            diag->editing_bar = !diag->editing_bar;
+    }
+    
+    // NEXT LINE, mostly just options
     ImGui::Checkbox("show hidden", &diag->show_hidden);
 
     const float font_size = ImGui::GetFontSize();
-    const float bottom_padding = -100; // TODO: calculate with style, height of button + separator, etc
+    const float bottom_padding = -1 * (ImGui::GetFrameHeight() + style->ItemSpacing.y); // TODO: calculate with style, height of button + separator, etc
     ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
 
     bool selected = false;
@@ -776,6 +885,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(style->CellPadding.x, 3));
         if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
         {
+
             // Display headers so we can inspect their interaction with borders
             // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
             ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
@@ -806,6 +916,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 _fs_ui_render_filesystem_type(draw_list, item->type, font_size, font_color);
 
                 ImGui::TableNextColumn();
+
                 // TODO: if (single/multi select ...)
                 if (ImGui::Selectable(item->path.data, diag->single_selection_index == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
                 {
@@ -861,8 +972,16 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     }
 
     // TODO: if multiple, display number of items instead
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.5f);
+    // TODO: completion / suggestions
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - min_size_left);
     ImGui::InputText("##selection", diag->selection_buffer, 255);
+    ImGui::SameLine();
+
+    bool cancelled = ImGui::Button("Cancel");
+
+    if (ImGui::IsKeyPressed(ImGuiKey_Escape, false))
+        cancelled = true;
+
     ImGui::SameLine();
 
     // TODO: if multiple
@@ -872,10 +991,6 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGui::BeginDisabled(!has_selection);
     selected |= ImGui::Button("Select");
     ImGui::EndDisabled();
-
-    ImGui::SameLine();
-
-    bool cancelled = ImGui::Button("Cancel");
 
     if (selected || cancelled)
     {
@@ -906,14 +1021,14 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 }
 }
 
-bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, ImGuiInputTextFlags flags, ImGuiInputTextCallback callback, void* callback_user_data)
+bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, int flags)
 {
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
     ImGuiStyle &st = ImGui::GetStyle();
 
     ImGui::PushID(label);
-    bool text_edited = ImGui::InputTextEx("", NULL, buf, (int)buf_size, ImVec2(0, 0), flags, callback, callback_user_data);
+    bool text_edited = ImGui::InputTextEx("", NULL, buf, (int)buf_size, ImVec2(0, 0), flags);
     ImGui::SameLine();
     ImGui::Dummy({-st.FramePadding.x * 2, 0});
     ImGui::SameLine();
