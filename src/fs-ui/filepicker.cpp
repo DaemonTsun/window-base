@@ -1,7 +1,6 @@
 
 // TODO: filter (by extension / filetype)
 // TODO: search (within 1 folder, not recursively; jump to search result)
-// TODO: global settings (editable bar, show_hidden)
 
 
 // future features:
@@ -98,14 +97,35 @@ static void free(fs_ui_dialog_settings *settings)
     free(&settings->last_directory);
 }
 
-// TODO: global settings? with show_hidden, edit_bar
-static hash_table<ImGuiID, fs_ui_dialog_settings> _ini_dialog_settings;
+struct fs_ui_ini_settings
+{
+    ImGuiID id;
+    hash_table<ImGuiID, fs_ui_dialog_settings> dialog_settings;
+    bool show_hidden;
+    bool edit_bar;
+
+    // TODO: pins
+};
+
+static fs_ui_ini_settings _ini_settings;
+
+static void init(fs_ui_ini_settings *settings)
+{
+    fill_memory(settings, 0);
+    settings->id = (ImGuiID)-1;
+    init_for_n_items(&settings->dialog_settings, 32);
+}
+
+static void free(fs_ui_ini_settings *settings)
+{
+    free<false, true>(&settings->dialog_settings);
+}
 
 static void _fs_ui_ClearAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler)
 {
     // tprint("ClearAll\n");
-    free<false, true>(&_ini_dialog_settings);
-    init(&_ini_dialog_settings);
+    free(&_ini_settings);
+    init(&_ini_settings);
 }
 
 static void *_fs_ui_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, const char* name)
@@ -113,10 +133,13 @@ static void *_fs_ui_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler,
     // tprint("ReadOpen %\n", name);
     ImGuiID id = 0;
 
+    if (compare_strings(name, "global") == 0)
+        return &_ini_settings;
+
     if (sscanf(name, "OpenFileDialog,%08x", &id) < 1)
         return nullptr;
 
-    fs_ui_dialog_settings *settings = search_or_insert(&_ini_dialog_settings, &id);
+    fs_ui_dialog_settings *settings = search_or_insert(&_ini_settings.dialog_settings, &id);
 
     if (settings == nullptr)
         return nullptr;
@@ -130,16 +153,27 @@ static void *_fs_ui_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler,
 static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, void* _entry, const char* _line)
 {
     // tprint("ReadLine\n");
-    fs_ui_dialog_settings *settings = (fs_ui_dialog_settings*)_entry;
-    
+
+    ImGuiID *id = (ImGuiID*)_entry;
     const_string line = to_const_string(_line);
 
-    if (begins_with(line, "LastDirectory="))
+    if (*id == (ImGuiID)-1)
     {
-        const_string dir = substring(line, 14);
+        // global settings have id -1
+        if      (line == "EditBar=1"_cs)    _ini_settings.edit_bar = true;
+        else if (line == "ShowHidden=1"_cs) _ini_settings.show_hidden = true;
+    }
+    else
+    {
+        fs_ui_dialog_settings *settings = (fs_ui_dialog_settings*)_entry;
 
-        if (!is_blank(dir))
-            settings->last_directory = copy_string(dir);
+        if (begins_with(line, "LastDirectory="))
+        {
+            const_string dir = substring(line, 14);
+
+            if (!is_blank(dir))
+                settings->last_directory = copy_string(dir);
+        }
     }
 }
 
@@ -147,12 +181,20 @@ static void _fs_ui_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
 {
     // tprint("WriteAll\n");
 
-    for_hash_table(v, &_ini_dialog_settings)
+    buf->appendf("[%s][global]\n", handler->TypeName);
+
+    buf->appendf("EditBar=%s\n",    _ini_settings.edit_bar    ? "1" : "0");
+    buf->appendf("ShowHidden=%s\n", _ini_settings.show_hidden ? "1" : "0");
+    buf->append("\n");
+
+    for_hash_table(v, &_ini_settings.dialog_settings)
     {
         buf->appendf("[%s][OpenFileDialog,%08x]\n", handler->TypeName, v->id);
 
         if (!is_blank(v->last_directory))
             buf->appendf("LastDirectory=%s\n", v->last_directory.data);
+
+        buf->append("\n");
     }
 
     buf->append("\n");
@@ -160,7 +202,7 @@ static void _fs_ui_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
 
 void FsUi::Init()
 {
-    init_for_n_items(&_ini_dialog_settings, 64);
+    init(&_ini_settings);
     ImGuiSettingsHandler ini_handler{};
     ini_handler.TypeName = "FsUi";
     ini_handler.TypeHash = ImHashStr("FsUi");
@@ -173,7 +215,7 @@ void FsUi::Init()
 
 void FsUi::Exit()
 {
-    free<false, true>(&_ini_dialog_settings);
+    free(&_ini_settings);
 }
 
 #define fs_ui_dialog_label_size 32
@@ -208,7 +250,6 @@ struct fs_ui_dialog
     // navigation
     fs::path current_dir;
     array<fs::const_fs_string> current_dir_segments;
-    bool editing_bar;
     bool current_dir_ok;
     string navigation_error_message;
     array<fs::path> back_stack;
@@ -217,7 +258,6 @@ struct fs_ui_dialog
     // items, display and sorting
     array<fs_ui_dialog_item> items;
     s64 single_selection_index;
-    bool show_hidden; // TODO: move to global settings
     int  last_sort_criteria;
     bool last_sort_ascending;
 
@@ -676,11 +716,11 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
         init(diag);
 
-        fs_ui_dialog_settings *settings = search(&_ini_dialog_settings, &id);
+        fs_ui_dialog_settings *settings = search(&_ini_settings.dialog_settings, &id);
 
         if (settings == nullptr)
         {
-            settings = add_element_by_key(&_ini_dialog_settings, &id);
+            settings = add_element_by_key(&_ini_settings.dialog_settings, &id);
             settings->id = id;
             init(&settings->last_directory);
         }
@@ -770,7 +810,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     const float total_space = ImGui::GetContentRegionMaxAbs().x;
     const float min_size_left = 200.f;
 
-    if (!diag->editing_bar)
+    if (!_ini_settings.edit_bar)
     {
         // The editing bar
         bool navigate_to_written_dir = false;
@@ -793,7 +833,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         ImGui::SameLine();
 
         if (ImGui::Button("[-/-]"))
-            diag->editing_bar = !diag->editing_bar;
+            _ini_settings.edit_bar = !_ini_settings.edit_bar;
 
         ImGui::SameLine();
         navigate_to_written_dir |= ImGui::Button("Go");
@@ -847,11 +887,11 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         ImGui::SameLine();
 
         if (ImGui::Button("Edit"))
-            diag->editing_bar = !diag->editing_bar;
+            _ini_settings.edit_bar = !_ini_settings.edit_bar;
     }
     
     // NEXT LINE, mostly just options
-    ImGui::Checkbox("show hidden", &diag->show_hidden);
+    ImGui::Checkbox("show hidden", &_ini_settings.show_hidden);
 
     const float font_size = ImGui::GetFontSize();
     const float bottom_padding = -1 * (ImGui::GetFrameHeight() + style->ItemSpacing.y); // TODO: calculate with style, height of button + separator, etc
@@ -907,7 +947,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
             for_array(i, item, &diag->items)
             {
-                if (!diag->show_hidden && item->path.data[0] == '.')
+                if (!_ini_settings.show_hidden && item->path.data[0] == '.')
                     continue;
 
                 ImGui::TableNextRow();
@@ -1006,7 +1046,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             copy_string(diag->_it_path.data, out_filebuf, filebuf_size);
 
             // save settings
-            fs_ui_dialog_settings *settings = search(&_ini_dialog_settings, &id);
+            fs_ui_dialog_settings *settings = search(&_ini_settings.dialog_settings, &id);
 
             assert(settings != nullptr);
             set_string(&settings->last_directory, to_const_string(diag->current_dir));
