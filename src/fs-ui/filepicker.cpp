@@ -1,11 +1,11 @@
 
-// TODO: filter (by extension / filetype)
-// TODO: search (within 1 folder, not recursively; jump to search result)
+// TODO: filter (by extension / filetype / file or dir)
 
 
 // future features:
 // TODO: multiple selection
 // TODO: pins
+// TODO: jump when typing in result table
 
 #define IMGUI_DEFINE_MATH_OPERATORS 1
 #include <time.h> // how sad, used for modified/created timestamp formatting
@@ -693,7 +693,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGuiStorage *storage = ImGui::GetStateStorage(); (void)storage;
     ImGuiStyle *style = &g.Style;
 
-    bool alt = ImGui::GetIO().KeyMods & ImGuiModFlags_Alt;
+    bool alt  = ImGui::GetIO().KeyMods & ImGuiModFlags_Alt;
+    bool ctrl = ImGui::GetIO().KeyMods & ImGuiModFlags_Ctrl;
 
     (void)label;
     (void)out_filebuf;
@@ -704,6 +705,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     const ImGuiID id = window->GetID(label);
     static char input_bar_content[4096] = {0};
+    static char quicksearch_content[256] = {0};
 
     // SETUP
     fs_ui_dialog *diag = (fs_ui_dialog*)storage->GetVoidPtr(id);
@@ -735,6 +737,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
         _fs_ui_dialog_load_path(diag);
         copy_string(diag->current_dir.data, input_bar_content, 4095);
+        quicksearch_content[0] = '\0';
     }
 
     if (ImGui::IsKeyPressed(ImGuiKey_F5))
@@ -880,9 +883,9 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
             ImGui::PopStyleColor();
             ImGui::PopStyleVar();
-
-            ImGui::EndChild();
         }
+
+        ImGui::EndChild();
 
         ImGui::SameLine();
 
@@ -893,6 +896,47 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     // NEXT LINE, mostly just options
     ImGui::Checkbox("show hidden", &_ini_settings.show_hidden);
 
+    ImGui::SameLine();
+
+    bool quicksearch_performed = false;
+    s64  quicksearch_result = -1;
+    bool quicksearch_submit = false;
+    ImGui::SetNextItemWidth(200.f);
+
+    if (ctrl && ImGui::IsKeyPressed(ImGuiKey_F))
+    {
+        quicksearch_content[0] = '\0';
+        ImGui::SetKeyboardFocusHere();
+    }
+
+    if (ImGui::InputText("quicksearch", quicksearch_content, 255))
+    {
+
+        if (quicksearch_content[0] == '\0')
+            quicksearch_result = -1;
+        else
+        {
+            quicksearch_performed = true;
+            for_array(i, item, &diag->items)
+                if (begins_with(item->path.data, quicksearch_content))
+                {
+                    quicksearch_result = i;
+                    break;
+                }
+        }
+    }
+
+    if (quicksearch_content[0] != '\0'
+     && ImGui::IsItemFocused()
+     && ImGui::IsKeyPressed(ImGuiKey_Enter))
+    {
+        quicksearch_submit = true;
+    }
+
+    if (quicksearch_performed && quicksearch_result == -1)
+        diag->single_selection_index = -1;
+
+    // ITEMS
     const float font_size = ImGui::GetFontSize();
     const float bottom_padding = -1 * (ImGui::GetFrameHeight() + style->ItemSpacing.y); // TODO: calculate with style, height of button + separator, etc
     ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
@@ -902,10 +946,9 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     if (!diag->current_dir_ok)
     {
         if (ImGui::BeginChild("##empty_or_not_found", ImVec2(-0, bottom_padding)))
-        {
             ImGui::Text("%s\n", diag->navigation_error_message.data);
-            ImGui::EndChild();
-        }
+
+        ImGui::EndChild();
     }
     else
     {
@@ -957,17 +1000,29 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
                 ImGui::TableNextColumn();
 
+                if (quicksearch_result == i)
+                {
+                    diag->single_selection_index = i;
+                    copy_string(item->path.data, diag->selection_buffer, 255);
+                    ImGui::SetScrollHereY(0.5f);
+                }
+
+                bool navigate_into = false;
+
                 // TODO: if (single/multi select ...)
                 if (ImGui::Selectable(item->path.data, diag->single_selection_index == i, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick))
                 {
                     diag->single_selection_index = i;
                     copy_string(item->path.data, diag->selection_buffer, 255);
 
-                    bool navigate_into = ImGui::IsMouseDoubleClicked(0);
-                    navigate_into     |= ImGui::IsKeyDown(ImGuiKey_Enter);
-                    if (navigate_into)
-                        navigate_into_index = i;
+                    navigate_into |= ImGui::IsMouseDoubleClicked(0);
+                    navigate_into |= ImGui::IsKeyPressed(ImGuiKey_Enter);
                 }
+
+                navigate_into |= (diag->single_selection_index == i && quicksearch_submit);
+
+                if (navigate_into)
+                    navigate_into_index = i;
 
                 // Size
                 ImGui::TableNextColumn();
@@ -981,6 +1036,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", item->created_label);
             }
+
+            // TODO: maybe Keyboard input for quicksearch?
 
             ImGui::EndTable();
         }
