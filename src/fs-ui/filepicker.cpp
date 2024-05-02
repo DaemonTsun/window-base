@@ -7,8 +7,8 @@
 // TODO: pins
 // TODO: jump when typing in result table
 
-#define IMGUI_DEFINE_MATH_OPERATORS 1
 #include <time.h> // how sad, used for modified/created timestamp formatting
+#define IMGUI_DEFINE_MATH_OPERATORS 1
 #include "imgui_internal.h"
 
 #include "shl/print.hpp"
@@ -19,69 +19,7 @@
 #include "shl/time.hpp"
 #include "fs/path.hpp"
 #include "fs-ui/filepicker.hpp"
-
-// utils
-static int lexicoraphical_compare(const char *s1, const char *s2)
-{
-    for (; *s1 && *s2; s1++, s2++)
-    {
-        if (*s1 < *s2) return -1;
-        if (*s1 > *s2) return  1;
-    }
-
-    if (*s2 != '\0') return -1;
-    if (*s1 != '\0') return  1;
-
-    return 0;
-}
-
-static int timespan_compare(const timespan *lhs, const timespan *rhs)
-{
-    if (lhs->seconds     < rhs->seconds)     return -1;
-    if (lhs->seconds     > rhs->seconds)     return  1;
-    if (lhs->nanoseconds < rhs->nanoseconds) return -1;
-    if (lhs->nanoseconds > rhs->nanoseconds) return  1;
-
-    return 0;
-}
-
-// why does ImGui not support this again...?
-bool ButtonSlice(const char* label, const char *label_end, const ImVec2& size_arg, ImGuiButtonFlags flags)
-{
-    using namespace ImGui;
-    ImGuiWindow* window = GetCurrentWindow();
-    if (window->SkipItems)
-        return false;
-
-    ImGuiContext& g = *GImGui;
-    const ImGuiStyle& style = g.Style;
-    const ImGuiID id = window->GetID(label);
-    const ImVec2 label_size = CalcTextSize(label, label_end, true);
-
-    ImVec2 pos = window->DC.CursorPos;
-    if ((flags & ImGuiButtonFlags_AlignTextBaseLine) && style.FramePadding.y < window->DC.CurrLineTextBaseOffset) // Try to vertically align buttons that are smaller/have no padding so that text baseline matches (bit hacky, since it shouldn't be a flag)
-        pos.y += window->DC.CurrLineTextBaseOffset - style.FramePadding.y;
-    ImVec2 size = CalcItemSize(size_arg, label_size.x + style.FramePadding.x * 2.0f, label_size.y + style.FramePadding.y * 2.0f);
-
-    const ImRect bb(pos, pos + size);
-    ItemSize(size, style.FramePadding.y);
-    if (!ItemAdd(bb, id))
-        return false;
-
-    bool hovered, held;
-    bool pressed = ButtonBehavior(bb, id, &hovered, &held, flags);
-
-    // Render
-    const ImU32 col = GetColorU32((held && hovered) ? ImGuiCol_ButtonActive : hovered ? ImGuiCol_ButtonHovered : ImGuiCol_Button);
-    RenderNavHighlight(bb, id);
-    RenderFrame(bb.Min, bb.Max, col, true, style.FrameRounding);
-
-    if (g.LogEnabled)
-        LogSetNextTextDecoration("[", "]");
-    RenderTextClipped(bb.Min + style.FramePadding, bb.Max - style.FramePadding, label, label_end, &label_size, style.ButtonTextAlign, &bb);
-    
-    return pressed;
-}
+#include "fs-ui/utils.hpp"
 
 // fsui
 
@@ -273,6 +211,7 @@ static void init(fs_ui_dialog *diag)
     diag->last_sort_ascending = true;
 
     fs::init(&diag->current_dir);
+    init(&diag->current_dir_segments);
     init(&diag->navigation_error_message);
     init(&diag->back_stack);
     init(&diag->forward_stack);
@@ -284,6 +223,7 @@ static void init(fs_ui_dialog *diag)
 static void free(fs_ui_dialog *diag)
 {
     fs::free(&diag->current_dir);
+    free(&diag->current_dir_segments);
     free(&diag->navigation_error_message);
     free<true>(&diag->back_stack);
     free<true>(&diag->forward_stack);
@@ -443,8 +383,8 @@ static void _fs_ui_render_filesystem_type(ImDrawList *lst, fs::filesystem_type t
         p0 += ImVec2((int)(-size * factor * 0.25f), (int)(size * factor * 0.3f));
         // Draw a folder
         const auto tl  = p0 + floor(size * (factor),            size * (factor * 2.f));
-        const auto m1  = p0 + floor(size * (factor * 2.f),     size * (factor * 2.f));
-        const auto m2  = p0 + floor(size * (factor * 3.f),     size * (factor * 1.0f));
+        const auto m1  = p0 + floor(size * (factor * 2.f),      size * (factor * 2.f));
+        const auto m2  = p0 + floor(size * (factor * 3.f),      size * (factor * 1.0f));
         const auto tr  = p0 + floor(size * (1 - factor * 0.5f), size * (factor * 1.0f));
         const auto tr2 = p0 + floor(size * (1 - factor * 0.5f), size * (factor * 2.0f));
         const auto br  = p0 + floor(size * (1 - factor * 0.5f), size * (1 - factor * 0.8f));
@@ -686,7 +626,7 @@ static void _history_clear(array<fs::path> *stack)
 
 namespace FsUi
 {
-bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter = nullptr, int flags = 0)
+bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter = "Any files (*.*)", int flags = 0)
 {
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
@@ -938,7 +878,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     // ITEMS
     const float font_size = ImGui::GetFontSize();
-    const float bottom_padding = -1 * (ImGui::GetFrameHeight() + style->ItemSpacing.y); // TODO: calculate with style, height of button + separator, etc
+    const float bottom_padding = -1 * (ImGui::GetFrameHeight() + style->ItemSpacing.y);
     ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
 
     bool selected = false;
@@ -1144,10 +1084,19 @@ bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, int flags)
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
-
     }
 
     ImGui::PopID();
 
     return text_edited;
+}
+
+void _fs_ui_parse_filters(const_string str, array<fs_ui_dialog_filter> *out_filters)
+{
+    fs_ui_parse_filters(str, out_filters);
+}
+
+void _fs_ui_free_filters(array<fs_ui_dialog_filter> *filters)
+{
+    free<true>(filters);
 }

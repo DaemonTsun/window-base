@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include "shl/string.hpp"
+
 namespace FsUi
 {
 void Init();
