@@ -193,6 +193,12 @@ struct fs_ui_dialog
     array<fs::path> back_stack;
     array<fs::path> forward_stack;
 
+    // settings
+    array<fs_ui_dialog_filter> filters;
+    s64 selected_filter_index;
+    string selected_filter_label; // I am deeply upset that ImGui doesn't support string slices (or only for very specific parts)
+    bool allow_directories;
+
     // items, display and sorting
     array<fs_ui_dialog_item> items;
     s64 single_selection_index;
@@ -215,6 +221,10 @@ static void init(fs_ui_dialog *diag)
     init(&diag->navigation_error_message);
     init(&diag->back_stack);
     init(&diag->forward_stack);
+
+    init(&diag->filters);
+    init(&diag->selected_filter_label);
+
     init(&diag->items);
 
     fs::init(&diag->_it_path);
@@ -227,6 +237,9 @@ static void free(fs_ui_dialog *diag)
     free(&diag->navigation_error_message);
     free<true>(&diag->back_stack);
     free<true>(&diag->forward_stack);
+
+    free<true>(&diag->filters);
+    free(&diag->selected_filter_label);
 
     free<true>(&diag->items);
     fs::free(&diag->_it_path);
@@ -465,7 +478,7 @@ static void _format_date(char *buf, s64 buf_size, timespan *sp)
 
     struct tm t;
 
-    tzset();
+    tzset(); // oof
 
     if (localtime_r((time_t*)sp, &t) == nullptr)
     {
@@ -626,7 +639,7 @@ static void _history_clear(array<fs::path> *stack)
 
 namespace FsUi
 {
-bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter = "Any files (*.*)", int flags = 0)
+bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter, int flags = 0)
 {
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
@@ -657,6 +670,11 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         storage->SetVoidPtr(id, (void*)diag);
 
         init(diag);
+
+        fs_ui_parse_filters(to_const_string(filter), &diag->filters);
+        (void)fs_ui_matches_filter;
+        assert(diag->filters.size > 0);
+        diag->selected_filter_label = copy_string(diag->filters[0].label);
 
         fs_ui_dialog_settings *settings = search(&_ini_settings.dialog_settings, &id);
 
@@ -933,6 +951,9 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 if (!_ini_settings.show_hidden && item->path.data[0] == '.')
                     continue;
 
+                if (!_is_directory(item) && !fs_ui_matches_filter(to_const_string(item->path), diag->filters.data + diag->selected_filter_index))
+                    continue;
+
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
 
@@ -1010,8 +1031,71 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     // TODO: if multiple, display number of items instead
     // TODO: completion / suggestions
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - min_size_left);
+    const float filter_width = 7.f * font_size;
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - filter_width - min_size_left);
     ImGui::InputText("##selection", diag->selection_buffer, 255);
+
+    ImGui::SameLine();
+
+    // filter
+    ImGui::SetNextItemWidth(filter_width);
+    if (ImGui::BeginCombo("##filter", diag->selected_filter_label.data, flags))
+    {
+        for_array(i, filter, &diag->filters)
+        {
+            ImGui::PushID(i);
+            if (ImGui::Selectable("##x", i == diag->selected_filter_index, ImGuiSelectableFlags_AllowOverlap))
+            {
+                diag->selected_filter_index = i;
+                diag->selected_filter_label = copy_string(diag->filters[i].label);
+            }
+
+            if (i == diag->selected_filter_index)
+                ImGui::SetItemDefaultFocus();
+            ImGui::PopID();
+            ImGui::SameLine();
+
+            TextSlice(filter->label);
+
+            ImGui::SameLine();
+            ImGui::Text("(");
+
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, style->ItemSpacing.y));
+            fs_ui_dialog_filter_item *item = &filter->items[0];
+
+            ImGui::SameLine();
+            TextSlice(item->filename);
+
+            if (item->extension.size > 0)
+            {
+                ImGui::SameLine();
+                TextSlice(item->extension);
+            }
+
+            for (s64 ii = 1; ii < filter->items.size; ++ii)
+            {
+                item = filter->items.data + ii;
+
+                ImGui::SameLine();
+                ImGui::Text(", ");
+                ImGui::SameLine();
+                TextSlice(item->filename);
+
+                if (item->extension.size > 0)
+                {
+                    ImGui::SameLine();
+                    TextSlice(item->extension);
+                }
+            }
+
+            ImGui::SameLine();
+            ImGui::Text(")");
+            ImGui::PopStyleVar();
+        }
+
+        ImGui::EndCombo();
+    }
+
     ImGui::SameLine();
 
     bool cancelled = ImGui::Button("Cancel");
@@ -1022,10 +1106,17 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGui::SameLine();
 
     // TODO: if multiple
-    // TODO: must exist
     bool has_selection = diag->selection_buffer[0] != '\0';
+    bool selection_allowed = false;
 
-    ImGui::BeginDisabled(!has_selection);
+    // TODO: check directories
+    // TODO: check must exist
+    // 1. see if input is not empty
+    selection_allowed = has_selection;
+    // 2. see if input matches selected filter
+    selection_allowed &= fs_ui_matches_filter(to_const_string(diag->selection_buffer), diag->filters.data + diag->selected_filter_index);
+
+    ImGui::BeginDisabled(!selection_allowed);
     selected |= ImGui::Button("Select");
     ImGui::EndDisabled();
 
@@ -1058,7 +1149,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 }
 }
 
-bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, int flags)
+bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, const char *filter, int flags)
 {
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
@@ -1080,7 +1171,7 @@ bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, int flags)
 
     if (ImGui::BeginPopupModal(popup_label))
     {
-        if (FsUi::OpenFileDialog(popup_label, buf, buf_size, nullptr, 0))
+        if (FsUi::OpenFileDialog(popup_label, buf, buf_size, filter, 0))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
@@ -1089,14 +1180,4 @@ bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, int flags)
     ImGui::PopID();
 
     return text_edited;
-}
-
-void _fs_ui_parse_filters(const_string str, array<fs_ui_dialog_filter> *out_filters)
-{
-    fs_ui_parse_filters(str, out_filters);
-}
-
-void _fs_ui_free_filters(array<fs_ui_dialog_filter> *filters)
-{
-    free<true>(filters);
 }

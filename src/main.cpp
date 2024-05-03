@@ -52,7 +52,7 @@ static void _update(GLFWwindow *window, double dt)
     {
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
 
-        FsUi::Filepicker("File Label 1", buf, 255);
+        FsUi::Filepicker("File Label 1", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file");
 
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
     }

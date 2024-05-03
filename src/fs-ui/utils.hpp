@@ -29,8 +29,13 @@ static int timespan_compare(const timespan *lhs, const timespan *rhs)
     return 0;
 }
 
+static void TextSlice(const_string str)
+{
+    ImGui::TextEx(str.c_str, str.c_str + str.size, 0);
+}
+
 // why does ImGui not support this again...?
-bool ButtonSlice(const char* label, const char *label_end, const ImVec2& size_arg, ImGuiButtonFlags flags)
+static bool ButtonSlice(const char* label, const char *label_end, const ImVec2& size_arg, ImGuiButtonFlags flags)
 {
     using namespace ImGui;
     ImGuiWindow* window = GetCurrentWindow();
@@ -207,7 +212,7 @@ static void fs_ui_parse_filters(const_string str, array<fs_ui_dialog_filter> *ou
     clear(out_filters);
 
     if (is_blank(str))
-        return;
+        str = to_const_string(DefaultDialogFilter);
 
     s64 i = 0;
 
@@ -215,4 +220,43 @@ static void fs_ui_parse_filters(const_string str, array<fs_ui_dialog_filter> *ou
         i = fs_ui_parse_filter(str, i, out_filters);
 
     assert(i >= str.size && "parse error, there is remaining input");
+}
+
+static bool fs_ui_matches_filter(const_string str, fs_ui_dialog_filter *f)
+{
+    const_string filename{};
+    const_string extension{};
+
+    s64 found = ::index_of(str, '.');
+
+    if (found < 0)
+        found = str.size;
+
+    filename = str;
+    filename.size = found;
+
+    if (found < str.size)
+    {
+        extension.c_str = str.c_str + found;
+        extension.size  = str.size - found;
+    }
+
+    for_array(i, &f->items)
+    {
+        bool any_filename = i->filename == "*"_cs;
+        bool any_extension = (i->extension.size == 0 || i->extension == ".*"_cs);
+
+        if (any_filename && any_extension)
+            return true;
+
+        if ((!any_filename) && filename != i->filename)
+            continue;
+
+        if ((!any_extension) && extension != i->extension)
+            continue;
+
+        return true;
+    }
+    
+    return false;
 }
