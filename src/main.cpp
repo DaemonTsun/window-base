@@ -47,12 +47,21 @@ static void _update(GLFWwindow *window, double dt)
     }
     ImGui::End();
 
-    ImGui::SetNextWindowSize({450, 200});
     ImGui::Begin("Filepicker After & Before text");
     {
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
 
+        ImGui::Text("No Flags");
         FsUi::Filepicker("File Label 1", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file");
+
+        ImGui::Text("FsUi_FilepickerFlags_NoDirectories");
+        FsUi::Filepicker("File Label 2", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", FsUi_FilepickerFlags_NoDirectories);
+
+        ImGui::Text("FsUi_FilepickerFlags_NoFiles");
+        FsUi::Filepicker("File Label 3", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", FsUi_FilepickerFlags_NoFiles);
+
+        ImGui::Text("FsUi_FilepickerFlags_SelectionMustExist");
+        FsUi::Filepicker("File Label 4", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", FsUi_FilepickerFlags_SelectionMustExist);
 
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
     }

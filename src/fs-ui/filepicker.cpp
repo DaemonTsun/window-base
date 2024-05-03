@@ -1,7 +1,4 @@
 
-// TODO: filter (by extension / filetype / file or dir)
-
-
 // future features:
 // TODO: multiple selection
 // TODO: pins
@@ -208,6 +205,10 @@ struct fs_ui_dialog
     // etc
     fs::path _it_path; // used during iteration, constantly overwritten
     char selection_buffer[255];
+    bool selection_exists;
+    fs::filesystem_type selection_type;
+    fs::filesystem_type selection_symlink_target_type;
+    bool selection_matches_filter;
 };
 
 static void init(fs_ui_dialog *diag)
@@ -265,7 +266,8 @@ static int _compare_item_type_descending(const fs_ui_dialog_item *lhs, const fs_
     return -_compare_item_type_ascending(lhs, rhs);
 }
 
-#define _is_directory(X) ((X)->type == fs::filesystem_type::Directory || ((X)->type == fs::filesystem_type::Symlink && (X)->symlink_target_type == fs::filesystem_type::Directory))
+#define _is_directory_type(Type, Symtype) ((Type) == fs::filesystem_type::Directory || ((Type) == fs::filesystem_type::Symlink && (Symtype) == fs::filesystem_type::Directory))
+#define _is_directory(X) _is_directory_type((X)->type, (X)->symlink_target_type)
 
 #define sort_directories_first(lhs, rhs)\
     if      (_is_directory(lhs) && !_is_directory(rhs)) return -1;\
@@ -657,8 +659,10 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     // ImGuiSettingsHandler
 
     const ImGuiID id = window->GetID(label);
-    static char input_bar_content[4096] = {0};
+    static char input_bar_content[4096] = {0}; // navbar
     static char quicksearch_content[256] = {0};
+
+    bool selection_changed = false;
 
     // SETUP
     fs_ui_dialog *diag = (fs_ui_dialog*)storage->GetVoidPtr(id);
@@ -674,7 +678,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         fs_ui_parse_filters(to_const_string(filter), &diag->filters);
         (void)fs_ui_matches_filter;
         assert(diag->filters.size > 0);
-        diag->selected_filter_label = copy_string(diag->filters[0].label);
+        set_string(&diag->selected_filter_label, diag->filters[0].label);
 
         fs_ui_dialog_settings *settings = search(&_ini_settings.dialog_settings, &id);
 
@@ -867,9 +871,12 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         ImGui::SetKeyboardFocusHere();
     }
 
-    if (ImGui::InputText("quicksearch", quicksearch_content, 255))
-    {
+    if (ImGui::InputText("quicksearch", quicksearch_content, 255, ImGuiInputTextFlags_EnterReturnsTrue))
+        quicksearch_submit = quicksearch_content[0] != '\0';
 
+    if (ImGui::IsItemFocused()
+     && ImGui::IsItemEdited())
+    {
         if (quicksearch_content[0] == '\0')
             quicksearch_result = -1;
         else
@@ -884,13 +891,6 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         }
     }
 
-    if (quicksearch_content[0] != '\0'
-     && ImGui::IsItemFocused()
-     && ImGui::IsKeyPressed(ImGuiKey_Enter))
-    {
-        quicksearch_submit = true;
-    }
-
     if (quicksearch_performed && quicksearch_result == -1)
         diag->single_selection_index = -1;
 
@@ -899,7 +899,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     const float bottom_padding = -1 * (ImGui::GetFrameHeight() + style->ItemSpacing.y);
     ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
 
-    bool selected = false;
+    bool submit_selection = false;
 
     if (!diag->current_dir_ok)
     {
@@ -951,7 +951,12 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 if (!_ini_settings.show_hidden && item->path.data[0] == '.')
                     continue;
 
-                if (!_is_directory(item) && !fs_ui_matches_filter(to_const_string(item->path), diag->filters.data + diag->selected_filter_index))
+                bool is_dir = _is_directory(item);
+
+                if ((!is_dir) && (flags & FsUi_FilepickerFlags_NoFiles))
+                    continue;
+
+                if ((!is_dir) && !fs_ui_matches_filter(to_const_string(item->path), diag->filters.data + diag->selected_filter_index))
                     continue;
 
                 ImGui::TableNextRow();
@@ -965,6 +970,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 {
                     diag->single_selection_index = i;
                     copy_string(item->path.data, diag->selection_buffer, 255);
+                    selection_changed = true;
                     ImGui::SetScrollHereY(0.5f);
                 }
 
@@ -975,6 +981,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 {
                     diag->single_selection_index = i;
                     copy_string(item->path.data, diag->selection_buffer, 255);
+                    selection_changed = true;
 
                     navigate_into |= ImGui::IsMouseDoubleClicked(0);
                     navigate_into |= ImGui::IsKeyPressed(ImGuiKey_Enter);
@@ -1014,6 +1021,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             if (_is_directory(item))
             {
                 diag->selection_buffer[0] = '\0';
+                selection_changed = true;
 
                 _history_push(&diag->back_stack, &diag->current_dir);
                 _history_clear(&diag->forward_stack);
@@ -1022,10 +1030,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 copy_string(diag->current_dir.data, input_bar_content, 4095);
             }
             else
-            {
-                // TODO: check filter
-                selected = true;
-            }
+                submit_selection = true;
         }
     }
 
@@ -1033,7 +1038,11 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     // TODO: completion / suggestions
     const float filter_width = 7.f * font_size;
     ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - filter_width - min_size_left);
-    ImGui::InputText("##selection", diag->selection_buffer, 255);
+    submit_selection |= ImGui::InputText("##selection", diag->selection_buffer, 255, ImGuiInputTextFlags_EnterReturnsTrue);
+
+    if (ImGui::IsItemFocused()
+     && ImGui::IsItemEdited())
+        selection_changed = true;
 
     ImGui::SameLine();
 
@@ -1047,7 +1056,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             if (ImGui::Selectable("##x", i == diag->selected_filter_index, ImGuiSelectableFlags_AllowOverlap))
             {
                 diag->selected_filter_index = i;
-                diag->selected_filter_label = copy_string(diag->filters[i].label);
+                set_string(&diag->selected_filter_label, diag->filters[i].label);
+                selection_changed = true;
             }
 
             if (i == diag->selected_filter_index)
@@ -1096,6 +1106,48 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         ImGui::EndCombo();
     }
 
+    if (selection_changed)
+    {
+        // if selection changed, either through clicking an item inside the table
+        // or manually editing the selection content, check if selection is correct.
+
+        if (diag->selection_buffer[0] == '\0')
+        {
+            diag->selection_exists = false;
+            diag->selection_type = fs::filesystem_type::Unknown;
+            diag->selection_symlink_target_type = fs::filesystem_type::Unknown;
+            diag->selection_matches_filter = false;
+        }
+        else
+        {
+            fs::set_path(&diag->_it_path, diag->current_dir);
+            fs::append_path(&diag->_it_path, diag->selection_buffer);
+
+            diag->selection_exists = fs::exists(diag->_it_path) == 1;
+
+            if (diag->selection_exists)
+            {
+                fs::get_filesystem_type(&diag->_it_path, &diag->selection_type, false);
+
+                // Gather filesystem information
+                if (diag->selection_type == fs::filesystem_type::Symlink)
+                    fs::get_filesystem_type(&diag->_it_path, &diag->selection_symlink_target_type);
+            }
+            else
+            {
+                // does not exist
+                diag->selection_type = fs::filesystem_type::Unknown;
+                diag->selection_symlink_target_type = fs::filesystem_type::Unknown;
+            }
+
+            if (_is_directory_type(diag->selection_type, diag->selection_symlink_target_type))
+                diag->selection_matches_filter = true; // directories always match
+            else
+                diag->selection_matches_filter = fs_ui_matches_filter(to_const_string(diag->selection_buffer), diag->filters.data + diag->selected_filter_index);
+        }
+    }
+
+
     ImGui::SameLine();
 
     bool cancelled = ImGui::Button("Cancel");
@@ -1106,25 +1158,29 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImGui::SameLine();
 
     // TODO: if multiple
-    bool has_selection = diag->selection_buffer[0] != '\0';
-    bool selection_allowed = false;
+    bool selection_allowed = diag->selection_buffer[0] != '\0';
 
-    // TODO: check directories
-    // TODO: check must exist
-    // 1. see if input is not empty
-    selection_allowed = has_selection;
-    // 2. see if input matches selected filter
-    selection_allowed &= fs_ui_matches_filter(to_const_string(diag->selection_buffer), diag->filters.data + diag->selected_filter_index);
+    if (selection_allowed && (flags & FsUi_FilepickerFlags_SelectionMustExist))
+        selection_allowed &= diag->selection_exists;
 
+    if (selection_allowed && (flags & FsUi_FilepickerFlags_NoDirectories))
+        selection_allowed &= !_is_directory_type(diag->selection_type, diag->selection_symlink_target_type);
+    else if (selection_allowed && (flags & FsUi_FilepickerFlags_NoFiles))
+        selection_allowed &=  _is_directory_type(diag->selection_type, diag->selection_symlink_target_type);
+
+    if (selection_allowed)
+        selection_allowed &= diag->selection_matches_filter;
+
+    submit_selection &= selection_allowed;
     ImGui::BeginDisabled(!selection_allowed);
-    selected |= ImGui::Button("Select");
+    submit_selection |= ImGui::Button("Select");
     ImGui::EndDisabled();
 
-    if (selected || cancelled)
+    if (submit_selection || cancelled)
     {
         // tprint("Free'd\n");
 
-        if (selected)
+        if (submit_selection)
         {
             // assemble the full path
             fs::set_path(&diag->_it_path, diag->current_dir);
@@ -1145,18 +1201,21 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         storage->SetVoidPtr(id, nullptr);
     }
 
-    return selected || cancelled;
+    return submit_selection || cancelled;
 }
 }
 
 bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, const char *filter, int flags)
 {
+#define FsUi_IllegalFlag (FsUi_FilepickerFlags_NoDirectories | FsUi_FilepickerFlags_NoFiles)
+    assert(((flags & FsUi_IllegalFlag) != FsUi_IllegalFlag) && "NoDirectories and NoFiles may not be set at the same time");
+
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
     ImGuiStyle &st = ImGui::GetStyle();
 
     ImGui::PushID(label);
-    bool text_edited = ImGui::InputTextEx("", NULL, buf, (int)buf_size, ImVec2(0, 0), flags);
+    bool text_edited = ImGui::InputTextEx("", NULL, buf, (int)buf_size, ImVec2(0, 0), 0);
     ImGui::SameLine();
     ImGui::Dummy({-st.FramePadding.x * 2, 0});
     ImGui::SameLine();
@@ -1171,7 +1230,7 @@ bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, const char 
 
     if (ImGui::BeginPopupModal(popup_label))
     {
-        if (FsUi::OpenFileDialog(popup_label, buf, buf_size, filter, 0))
+        if (FsUi::OpenFileDialog(popup_label, buf, buf_size, filter, flags))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
