@@ -1,7 +1,6 @@
 
 // future features:
 // TODO: multiple selection
-// TODO: pins
 // TODO: jump when typing in result table
 
 #include <time.h> // how sad, used for modified/created timestamp formatting
@@ -32,6 +31,31 @@ static void free(fs_ui_dialog_settings *settings)
     free(&settings->last_directory);
 }
 
+struct fs_ui_pin
+{
+    const_string name;
+    string path;
+};
+
+static void init(fs_ui_pin *pin)
+{
+    fill_memory(pin, 0);
+}
+
+static void free(fs_ui_pin *pin)
+{
+    free(&pin->path);
+}
+
+static s64 fs_ui_path_pin_index(const_string str, array<fs_ui_pin> *pins)
+{
+    for_array(i, pin, pins)
+        if (to_const_string(pin->path) == str)
+            return i;
+
+    return -1;
+}
+
 struct fs_ui_ini_settings
 {
     ImGuiID id;
@@ -39,7 +63,7 @@ struct fs_ui_ini_settings
     bool show_hidden;
     bool edit_bar;
 
-    // TODO: pins
+    array<fs_ui_pin> pins;
 };
 
 static fs_ui_ini_settings _ini_settings;
@@ -49,11 +73,13 @@ static void init(fs_ui_ini_settings *settings)
     fill_memory(settings, 0);
     settings->id = (ImGuiID)-1;
     init_for_n_items(&settings->dialog_settings, 32);
+    init(&settings->pins);
 }
 
 static void free(fs_ui_ini_settings *settings)
 {
     free<false, true>(&settings->dialog_settings);
+    free<true>(&settings->pins);
 }
 
 static void _fs_ui_ClearAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler)
@@ -97,6 +123,26 @@ static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
         // global settings have id -1
         if      (line == "EditBar=1"_cs)    _ini_settings.edit_bar = true;
         else if (line == "ShowHidden=1"_cs) _ini_settings.show_hidden = true;
+        else if (begins_with(line, "Pin="_cs))
+        {
+            const_string pinpath = line;
+            pinpath.c_str += 4; // "Pin="
+            pinpath.size  -= 4;
+
+            if (!is_blank(pinpath))
+            {
+                fs_ui_pin *pin = add_at_end(&_ini_settings.pins);
+
+                fs::path tmp{};
+                defer { fs::free(&tmp); };
+                fs::set_path(&tmp, pinpath);
+                
+                s64 fname_length = fs::filename(&tmp).size;
+                pin->path = copy_string(tmp.data);
+                pin->name.c_str = pin->path.data + (pin->path.size - fname_length);
+                pin->name.size = fname_length;
+            }
+        }
     }
     else
     {
@@ -120,6 +166,10 @@ static void _fs_ui_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
 
     buf->appendf("EditBar=%s\n",    _ini_settings.edit_bar    ? "1" : "0");
     buf->appendf("ShowHidden=%s\n", _ini_settings.show_hidden ? "1" : "0");
+
+    for_array(pin, &_ini_settings.pins)
+        buf->appendf("Pin=%s\n", pin->path.data);
+
     buf->append("\n");
 
     for_hash_table(v, &_ini_settings.dialog_settings)
@@ -860,6 +910,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
     ImGui::SameLine();
 
+    // Quicksearch
     bool quicksearch_performed = false;
     s64  quicksearch_result = -1;
     bool quicksearch_submit = false;
@@ -900,6 +951,73 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     ImU32 font_color = ImGui::ColorConvertFloat4ToU32(style->Colors[ImGuiCol_Text]);
 
     bool submit_selection = false;
+
+    // pins
+    if (ImGui::BeginChild("Pins", ImVec2(100.f, bottom_padding), ImGuiChildFlags_ResizeX))
+    {
+        ImGui::Text("Pins");
+        ImGui::Separator();
+
+        for_array(i, pin, &_ini_settings.pins)
+        {
+            ImGui::PushID(i);
+            if (ImGui::Selectable(pin->name.c_str))
+            {
+                diag->selection_buffer[0] = '\0';
+                selection_changed = true;
+
+                _history_push(&diag->back_stack, &diag->current_dir);
+                _history_clear(&diag->forward_stack);
+                fs::set_path(&diag->current_dir, pin->path);
+                _fs_ui_dialog_load_path(diag);
+                copy_string(diag->current_dir.data, input_bar_content, 4095);
+            }
+
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
+            {
+                // Set payload to carry the index of our item (could be anything)
+                ImGui::SetDragDropPayload("pin_reorder", &i, sizeof(i));
+                ImGui::Text("%s", pin->name.c_str);
+                ImGui::EndDragDropSource();
+            }
+
+            if (ImGui::BeginDragDropTarget())
+            {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("pin_reorder"))
+                {
+                    assert(payload->DataSize == sizeof(i));
+                    s64 i_next = *(const s64*)payload->Data;
+
+                    if (i != i_next)
+                    {
+                        fs_ui_pin tmp = *pin;
+                        _ini_settings.pins[i] = _ini_settings.pins[i_next];
+                        _ini_settings.pins[i_next] = tmp;
+                    }
+                }
+
+                ImGui::EndDragDropTarget();
+            }
+
+            if (ImGui::BeginPopupContextItem())
+            {
+                if (ImGui::MenuItem("Unpin"))
+                {
+                    free(pin);
+                    remove_elements(&_ini_settings.pins, i, 1);
+                    i -= 1;
+                }
+
+                ImGui::EndPopup();
+            }
+
+            ImGui::PopID();
+        }
+    }
+    ImGui::EndChild();
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6, style->ItemSpacing.y));
+    ImGui::SameLine();
+    ImGui::PopStyleVar();
 
     if (!diag->current_dir_ok)
     {
@@ -985,6 +1103,40 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
                     navigate_into |= ImGui::IsMouseDoubleClicked(0);
                     navigate_into |= ImGui::IsKeyPressed(ImGuiKey_Enter);
+                }
+                ImGui::SetItemKeyOwner(ImGuiMod_Alt);
+
+                if (_is_directory(item))
+                {
+                    if (ImGui::BeginPopupContextItem())
+                    {
+                        // pins
+                        if (ImGui::MenuItem("Pin / Unpin"))
+                        {
+                            fs::set_path(&diag->_it_path, diag->current_dir);
+                            fs::append_path(&diag->_it_path, item->path);
+
+                            s64 pin_index = fs_ui_path_pin_index(to_const_string(diag->_it_path), &_ini_settings.pins);
+
+                            if (pin_index < 0)
+                            {
+                                fs_ui_pin *pin = add_at_end(&_ini_settings.pins);
+                                init(pin);
+
+                                pin->path = copy_string(diag->_it_path.data);
+                                pin->name.c_str = pin->path.data + (pin->path.size - item->path.size);
+                                pin->name.size = item->path.size;
+                            }
+                            else
+                            {
+                                fs_ui_pin *pin = _ini_settings.pins.data + pin_index;
+                                free(pin);
+                                remove_elements(&_ini_settings.pins, pin_index, 1);
+                            }
+                        }
+
+                        ImGui::EndPopup();
+                    }
                 }
 
                 navigate_into |= (diag->single_selection_index == i && quicksearch_submit);
