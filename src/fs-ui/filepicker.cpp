@@ -17,6 +17,17 @@
 #include "fs-ui/filepicker.hpp"
 #include "fs-ui/utils.hpp"
 
+#define FsUi_Ini_Name "FsUi"
+#define FsUi_Ini_Preferences "Preferences"
+#define FsUi_Ini_Preferences_EditBar    "EditBar"
+#define FsUi_Ini_Preferences_ShowHidden "ShowHidden"
+#define FsUi_Ini_Preferences_Pin        "Pin"
+
+#define FsUi_Ini_Dialog_Preferences "FileDialog"
+#define FsUi_Ini_Dialog_Preferences_LastDirectory "LastDirectory"
+
+#define FsUi_Dialog_Navbar_Size 4096
+
 // fsui
 
 struct fs_ui_dialog_settings
@@ -94,10 +105,10 @@ static void *_fs_ui_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler,
     // tprint("ReadOpen %\n", name);
     ImGuiID id = 0;
 
-    if (compare_strings(name, "global") == 0)
+    if (compare_strings(name, FsUi_Ini_Preferences) == 0)
         return &_ini_settings;
 
-    if (sscanf(name, "OpenFileDialog,%08x", &id) < 1)
+    if (sscanf(name, FsUi_Ini_Dialog_Preferences ",%08x", &id) < 1)
         return nullptr;
 
     fs_ui_dialog_settings *settings = search_or_insert(&_ini_settings.dialog_settings, &id);
@@ -121,13 +132,13 @@ static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
     if (*id == (ImGuiID)-1)
     {
         // global settings have id -1
-        if      (line == "EditBar=1"_cs)    _ini_settings.edit_bar = true;
-        else if (line == "ShowHidden=1"_cs) _ini_settings.show_hidden = true;
-        else if (begins_with(line, "Pin="_cs))
+        if      (line == FsUi_Ini_Preferences_EditBar "=1"_cs)    _ini_settings.edit_bar = true;
+        else if (line == FsUi_Ini_Preferences_ShowHidden "=1"_cs) _ini_settings.show_hidden = true;
+        else if (begins_with(line, FsUi_Ini_Preferences_Pin "="_cs))
         {
             const_string pinpath = line;
-            pinpath.c_str += 4; // "Pin="
-            pinpath.size  -= 4;
+            pinpath.c_str += string_length(FsUi_Ini_Preferences_Pin) + 1;
+            pinpath.size  -= string_length(FsUi_Ini_Preferences_Pin) + 1;
 
             if (!is_blank(pinpath))
             {
@@ -148,7 +159,7 @@ static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
     {
         fs_ui_dialog_settings *settings = (fs_ui_dialog_settings*)_entry;
 
-        if (begins_with(line, "LastDirectory="))
+        if (begins_with(line, FsUi_Ini_Dialog_Preferences_LastDirectory "="_cs))
         {
             const_string dir = substring(line, 14);
 
@@ -162,22 +173,22 @@ static void _fs_ui_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
 {
     // tprint("WriteAll\n");
 
-    buf->appendf("[%s][global]\n", handler->TypeName);
+    buf->appendf("[%s][" FsUi_Ini_Preferences "]\n", handler->TypeName);
 
-    buf->appendf("EditBar=%s\n",    _ini_settings.edit_bar    ? "1" : "0");
-    buf->appendf("ShowHidden=%s\n", _ini_settings.show_hidden ? "1" : "0");
+    buf->appendf(FsUi_Ini_Preferences_EditBar    "=%s\n", _ini_settings.edit_bar    ? "1" : "0");
+    buf->appendf(FsUi_Ini_Preferences_ShowHidden "=%s\n", _ini_settings.show_hidden ? "1" : "0");
 
     for_array(pin, &_ini_settings.pins)
-        buf->appendf("Pin=%s\n", pin->path.data);
+        buf->appendf(FsUi_Ini_Preferences_Pin "=%s\n", pin->path.data);
 
     buf->append("\n");
 
     for_hash_table(v, &_ini_settings.dialog_settings)
     {
-        buf->appendf("[%s][OpenFileDialog,%08x]\n", handler->TypeName, v->id);
+        buf->appendf("[%s][" FsUi_Ini_Dialog_Preferences ",%08x]\n", handler->TypeName, v->id);
 
         if (!is_blank(v->last_directory))
-            buf->appendf("LastDirectory=%s\n", v->last_directory.data);
+            buf->appendf(FsUi_Ini_Dialog_Preferences_LastDirectory "=%s\n", v->last_directory.data);
 
         buf->append("\n");
     }
@@ -189,8 +200,8 @@ void FsUi::Init()
 {
     init(&_ini_settings);
     ImGuiSettingsHandler ini_handler{};
-    ini_handler.TypeName = "FsUi";
-    ini_handler.TypeHash = ImHashStr("FsUi");
+    ini_handler.TypeName = FsUi_Ini_Name;
+    ini_handler.TypeHash = ImHashStr(FsUi_Ini_Name);
     ini_handler.ClearAllFn = _fs_ui_ClearAllFn;
     ini_handler.ReadOpenFn = _fs_ui_ReadOpenFn;
     ini_handler.ReadLineFn = _fs_ui_ReadLineFn;
@@ -709,7 +720,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     // ImGuiSettingsHandler
 
     const ImGuiID id = window->GetID(label);
-    static char input_bar_content[4096] = {0}; // navbar
+    static char navbar_content[FsUi_Dialog_Navbar_Size] = {0};
     static char quicksearch_content[256] = {0};
 
     bool selection_changed = false;
@@ -748,7 +759,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             fs::set_path(&diag->current_dir, to_const_string(settings->last_directory));
 
         _fs_ui_dialog_load_path(diag);
-        copy_string(diag->current_dir.data, input_bar_content, 4095);
+        copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
         quicksearch_content[0] = '\0';
     }
 
@@ -756,7 +767,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
     {
         // refresh
         _fs_ui_dialog_load_path(diag);
-        copy_string(diag->current_dir.data, input_bar_content, 4095);
+        copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
     }
 
     // HOME
@@ -770,7 +781,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         _history_clear(&diag->forward_stack);
         fs::get_home_path(&diag->current_dir);
         _fs_ui_dialog_load_path(diag);
-        copy_string(diag->current_dir.data, input_bar_content, 4095);
+        copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
     }
 
     ImGui::SameLine();
@@ -784,7 +795,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         _history_pop(&diag->back_stack, &diag->current_dir);
 
         _fs_ui_dialog_load_path(diag);
-        copy_string(diag->current_dir.data, input_bar_content, 4095);
+        copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
     }
     ImGui::EndDisabled();
 
@@ -798,7 +809,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         _history_pop(&diag->forward_stack, &diag->current_dir);
 
         _fs_ui_dialog_load_path(diag);
-        copy_string(diag->current_dir.data, input_bar_content, 4095);
+        copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
     }
     ImGui::EndDisabled();
     
@@ -816,7 +827,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             diag->current_dir.size = parent.size;
             diag->current_dir.data[parent.size] = '\0';
             _fs_ui_dialog_load_path(diag);
-            copy_string(diag->current_dir.data, input_bar_content, 4095);
+            copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
         }
     }
     ImGui::PopStyleVar();
@@ -835,10 +846,10 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
 
         ImGui::SameLine();
 
-        navigate_to_written_dir = ImGui::InputTextEx("##input_bar",
+        navigate_to_written_dir = ImGui::InputTextEx("##navbar",
                                                      nullptr,
-                                                     input_bar_content,
-                                                     4095,
+                                                     navbar_content,
+                                                     FsUi_Dialog_Navbar_Size - 1,
                                                      ImVec2(Max(10.f, total_space - min_size_left - window->DC.CursorPos.x), 0),
                                                      ImGuiInputTextFlags_EnterReturnsTrue,
                                                      nullptr,
@@ -858,8 +869,8 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
             _history_push(&diag->back_stack, &diag->current_dir);
             _history_clear(&diag->forward_stack);
 
-            if (!is_blank(input_bar_content))
-                fs::set_path(&diag->current_dir, input_bar_content);
+            if (!is_blank(navbar_content))
+                fs::set_path(&diag->current_dir, navbar_content);
 
             _fs_ui_dialog_load_path(diag);
         }
@@ -887,7 +898,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                     diag->current_dir.data[end] = '\0';
 
                     _fs_ui_dialog_load_path(diag);
-                    copy_string(diag->current_dir.data, input_bar_content, 4095);
+                    copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
                 }
 
                 ImGui::SameLine();
@@ -970,7 +981,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 _history_clear(&diag->forward_stack);
                 fs::set_path(&diag->current_dir, pin->path);
                 _fs_ui_dialog_load_path(diag);
-                copy_string(diag->current_dir.data, input_bar_content, 4095);
+                copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
             }
 
             if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None))
@@ -1044,7 +1055,6 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
         ImGui::PushStyleVar(ImGuiStyleVar_CellPadding, ImVec2(style->CellPadding.x, 3));
         if (ImGui::BeginTable("fs_dialog_content_table", 5, table_flags, ImVec2(-0, bottom_padding)))
         {
-
             // Display headers so we can inspect their interaction with borders
             // (Headers are not the main purpose of this section of the demo, so we are not elaborating on them now. See other sections for details)
             ImGui::TableSetupScrollFreeze(0, 1); // Make top row always visible
@@ -1179,7 +1189,7 @@ bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, c
                 _history_clear(&diag->forward_stack);
                 fs::append_path(&diag->current_dir, item->path);
                 _fs_ui_dialog_load_path(diag);
-                copy_string(diag->current_dir.data, input_bar_content, 4095);
+                copy_string(diag->current_dir.data, navbar_content, FsUi_Dialog_Navbar_Size - 1);
             }
             else
                 submit_selection = true;
