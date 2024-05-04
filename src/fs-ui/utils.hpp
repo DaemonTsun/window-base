@@ -212,7 +212,7 @@ static void fs_ui_parse_filters(const_string str, array<fs_ui_dialog_filter> *ou
     clear(out_filters);
 
     if (is_blank(str))
-        str = to_const_string(DefaultDialogFilter);
+        str = to_const_string(FsUi_DefaultDialogFilter);
 
     s64 i = 0;
 

@@ -702,7 +702,7 @@ static void _history_clear(array<fs::path> *stack)
 
 namespace FsUi
 {
-bool OpenFileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter, int flags = 0)
+bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const char *filter, FsUi_FilepickerFlags flags)
 {
     ImGuiContext &g = *GImGui; (void)g;
     ImGuiWindow *window = g.CurrentWindow; (void)window;
@@ -1392,7 +1392,7 @@ bool FsUi::Filepicker(const char *label, char *buf, size_t buf_size, const char 
 
     if (ImGui::BeginPopupModal(popup_label))
     {
-        if (FsUi::OpenFileDialog(popup_label, buf, buf_size, filter, flags))
+        if (FsUi::FileDialog(popup_label, buf, buf_size, filter, flags))
             ImGui::CloseCurrentPopup();
 
         ImGui::EndPopup();
