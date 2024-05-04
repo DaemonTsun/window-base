@@ -1,8 +1,8 @@
 
 #include "shl/defer.hpp"
 
-#include "window/colors/light.hpp"
 #include "window/styles/main_style.hpp"
+#include "window/colorscheme.hpp"
 #include "window/find_font.hpp"
 #include "window/fonts.hpp"
 #include "window/window_imgui_util.hpp"
@@ -15,15 +15,51 @@ const float font_size = 20.f;
 const int window_width  = 1600;
 const int window_height = 900;
 
-static void _update(GLFWwindow *window, double dt)
+static void _basic_window()
 {
-    ui_new_frame();
-
     ImGui::Begin("Window");
 
     ImGui::Text("Hello");
 
     ImGui::End();
+}
+
+static void _template_settings_window()
+{
+    ImGui::Begin("Settings");
+
+    if (ImGui::CollapsingHeader("Style & Colors"))
+    {
+        static const colorscheme *schemes = nullptr;
+        static int count = 0;
+        static int selection = 0;
+
+        if (schemes == nullptr)
+            colorscheme_get_all(&schemes, &count);
+
+        if (ImGui::BeginCombo("Colorscheme", schemes[selection].name, 0))
+        {
+            for (int i = 0; i < count; i++)
+            {
+                if (ImGui::Selectable(schemes[i].name, selection == i))
+                {
+                    selection = i;
+                    colorscheme_set(schemes + i);
+                }
+            }
+            ImGui::EndCombo();
+        }
+    }
+
+    ImGui::End();
+}
+
+static void _update(GLFWwindow *window, double dt)
+{
+    ui_new_frame();
+
+    _basic_window();
+    _template_settings_window();
 
     ui_end_frame();
 }
@@ -49,7 +85,6 @@ static void _set_imgui_style_and_colors()
     ImGuiIO &io = ImGui::GetIO(); (void)io;
     ImGuiStyle &st = ImGui::GetStyle();
     set_style(&st);
-    set_colors(&st);
 }
 
 int main(int argc, const char *argv[])

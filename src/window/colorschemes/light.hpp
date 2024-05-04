@@ -3,7 +3,8 @@
 
 #include "imgui.h"
 
-static void set_colors(ImGuiStyle *dst = nullptr)
+constexpr const char *colorscheme_light_name = "Light";
+static void colorscheme_light_apply(ImGuiStyle *dst = nullptr)
 {
     ImGuiStyle* style = dst ? dst : &ImGui::GetStyle();
     ImVec4* colors = style->Colors;

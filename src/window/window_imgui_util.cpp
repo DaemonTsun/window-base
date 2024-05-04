@@ -9,8 +9,8 @@
 #include "backends/imgui_impl_glfw.h"
 #include "imgui.h"
 
-
-#include "window_imgui_util.hpp"
+#include "window/colorscheme.hpp"
+#include "window/window_imgui_util.hpp"
 
 static const char *_glsl_version = "#version 330";
 
@@ -123,6 +123,8 @@ void ui_init(GLFWwindow *window)
 
     ImGui_ImplGlfw_InitForOpenGL(window, true /* install callbacks */);
     ImGui_ImplOpenGL3_Init(_glsl_version);
+
+    colorscheme_init();
 }
 
 void ui_exit(GLFWwindow *window)
@@ -130,6 +132,8 @@ void ui_exit(GLFWwindow *window)
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
+
+    colorscheme_free();
 }
 
 void ui_new_frame()

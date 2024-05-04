@@ -632,7 +632,7 @@ static bool _load_fontconfig_cache(ff_cache *c)
         return false;
     }
 
-    tprint("found cache path: %\n", fc_path);
+    // tprint("found cache path: %\n", fc_path);
 
     array<string> cache_files{};
     defer { free<true>(&cache_files); };
