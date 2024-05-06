@@ -19,6 +19,7 @@ add_exe(window-template
     CPP_VERSION 20
     CPP_WARNINGS ALL SANE FATAL
                  @GNU -Werror
+                 @MSVC /wd5219 # int -> float conv
 
     LIBRARIES ${GLFW_LIBRARIES}
               ${imgui_LIBRARIES}
