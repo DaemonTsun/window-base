@@ -12,6 +12,8 @@ include("cmake/imgui.cmake")
 
 find_package(OpenGL)
 
+set(fs_COMPILE_DEFINITIONS @Windows)
+
 add_exe(window-template
     VERSION 0.0.1
     SOURCES_DIR "${ROOT}/src"
@@ -21,6 +23,7 @@ add_exe(window-template
                  @GNU -Werror
                  @MSVC /wd5219 # int -> float conv
 
+    COMPILE_DEFINITIONS ${fs_COMPILE_DEFINITIONS}
     # COMPILE_FLAGS @GNU -fno-char8_t
 
     LIBRARIES ${GLFW_LIBRARIES}
