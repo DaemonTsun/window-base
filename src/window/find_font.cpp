@@ -609,8 +609,10 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
 
         if (st != nullptr)
         {
+            /*
             if (st->path != path)
                 tprint("  Warning: path mismatch in font %, style %: %, %\n", name, style, path, st->path);
+            */
         }
         else
         {

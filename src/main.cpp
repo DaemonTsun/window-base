@@ -28,7 +28,13 @@ static void _template_settings_window()
         static int selection = 0;
 
         if (schemes == nullptr)
+        {
             colorscheme_get_all(&schemes, &count);
+
+            for (int i = 0; i < count; ++i)
+                if (schemes + i == colorscheme_get_current())
+                    selection = i;
+        }
 
         if (ImGui::BeginCombo("Colorscheme", schemes[selection].name, 0))
         {
@@ -49,7 +55,7 @@ static void _template_settings_window()
 
 static void _update(GLFWwindow *window, double dt)
 {
-    ui_new_frame();
+    imgui_new_frame();
 
     _template_settings_window();
 
@@ -102,7 +108,7 @@ static void _update(GLFWwindow *window, double dt)
 
     ImGui::ShowDemoWindow();
 
-    ui_end_frame();
+    imgui_end_frame();
 }
 
 static void _load_imgui_fonts()
@@ -133,11 +139,11 @@ int main(int argc, const char *argv[])
     window_init();
     defer { window_exit(); };
 
-    GLFWwindow *window = create_window(window_template_NAME, window_width, window_height);
-    defer { destroy_window(window); };
+    GLFWwindow *window = window_create(window_template_NAME, window_width, window_height);
+    defer { window_destroy(window); };
 
-    ui_init(window);
-    defer { ui_exit(window); };
+    imgui_init(window);
+    defer { imgui_exit(window); };
 
     _load_imgui_fonts();
     _set_imgui_style_and_colors();
