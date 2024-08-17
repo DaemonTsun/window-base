@@ -113,6 +113,7 @@ void window_set_keyboard_callback(GLFWwindow *window, keyboard_callback cb)
 
 void default_render_function(GLFWwindow *window, double dt)
 {
+    (void)dt;
     ImGui::Render();
 
     int display_w, display_h;
@@ -166,6 +167,8 @@ void imgui_init(GLFWwindow *window)
 
 void imgui_exit(GLFWwindow *window)
 {
+    (void)window;
+
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();

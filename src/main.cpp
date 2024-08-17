@@ -55,6 +55,9 @@ static void _template_settings_window()
 
 static void _update(GLFWwindow *window, double dt)
 {
+    (void)window;
+    (void)dt;
+
     imgui_new_frame();
 
     _template_settings_window();
@@ -136,6 +139,9 @@ static void _set_imgui_style_and_colors()
 
 int main(int argc, const char *argv[])
 {
+    (void)argc;
+    (void)argv;
+
     window_init();
     defer { window_exit(); };
 

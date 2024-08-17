@@ -21,7 +21,6 @@ add_exe(window-template
     CPP_VERSION 20
     CPP_WARNINGS ALL SANE FATAL
                  @GNU -Werror
-                 @MSVC /wd5219 # int -> float conv
 
     COMPILE_DEFINITIONS ${fs_COMPILE_DEFINITIONS}
     # COMPILE_FLAGS @GNU -fno-char8_t
@@ -35,8 +34,8 @@ add_exe(window-template
                  ${imgui_INCLUDE_DIRS}
 
     EXT
-        LIB shl      0.9.3 "${ROOT}/ext/shl" INCLUDE LINK GIT_SUBMODULE
-        LIB fs       0.8.0 "${ROOT}/ext/fs"  INCLUDE LINK GIT_SUBMODULE
+        LIB shl      0.9.4 "${ROOT}/ext/shl" INCLUDE LINK GIT_SUBMODULE
+        LIB fs       0.8.2 "${ROOT}/ext/fs"  INCLUDE LINK GIT_SUBMODULE
 
     SUBMODULES
         MODULE glfw  "${ROOT}/ext/glfw"

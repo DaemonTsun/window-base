@@ -96,6 +96,8 @@ static void free(fs_ui_ini_settings *settings)
 
 static void _fs_ui_ClearAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler)
 {
+    (void)ctx;
+    (void)handler;
     // tprint("ClearAll\n");
     free(&_ini_settings);
     init(&_ini_settings);
@@ -103,6 +105,8 @@ static void _fs_ui_ClearAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler)
 
 static void *_fs_ui_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, const char* name)
 {
+    (void)ctx;
+    (void)handler;
     // tprint("ReadOpen %\n", name);
     ImGuiID id = 0;
 
@@ -125,6 +129,8 @@ static void *_fs_ui_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler,
 
 static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, void* _entry, const char* _line)
 {
+    (void)ctx;
+    (void)handler;
     // tprint("ReadLine\n");
 
     ImGuiID *id = (ImGuiID*)_entry;
@@ -172,6 +178,7 @@ static void _fs_ui_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, 
 
 static void _fs_ui_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* handler, ImGuiTextBuffer* buf)
 {
+    (void)ctx;
     // tprint("WriteAll\n");
 
     buf->appendf("[%s][" FsUi_Ini_Preferences "]\n", handler->TypeName);
