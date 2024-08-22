@@ -13,7 +13,7 @@
 
 static ImFont *ui_font = nullptr;
 static ImFont *monospace_font = nullptr;
-const float font_size = 20.f;
+const float font_size   = 20.f;
 const int window_width  = 1600;
 const int window_height = 900;
 
@@ -135,6 +135,8 @@ static void _set_imgui_style_and_colors()
     ImGuiIO &io = ImGui::GetIO(); (void)io;
     ImGuiStyle &st = ImGui::GetStyle();
     set_style(&st);
+
+    colorscheme_set_default();
 }
 
 int main(int argc, const char *argv[])
@@ -154,7 +156,7 @@ int main(int argc, const char *argv[])
     _load_imgui_fonts();
     _set_imgui_style_and_colors();
 
-    window_event_loop(window, _update);
+    window_event_loop(window, _update, default_render_function, 10.f);
 
     return 0;
 }

@@ -771,8 +771,8 @@ bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const
     ImGuiStorage *storage = ImGui::GetStateStorage(); (void)storage;
     ImGuiStyle *style = &g.Style;
 
-    bool alt  = ImGui::GetIO().KeyMods & ImGuiModFlags_Alt;
-    bool ctrl = ImGui::GetIO().KeyMods & ImGuiModFlags_Ctrl;
+    bool alt  = ImGui::GetIO().KeyMods & ImGuiMod_Alt;
+    bool ctrl = ImGui::GetIO().KeyMods & ImGuiMod_Ctrl;
 
     (void)label;
     (void)out_filebuf;
@@ -894,8 +894,8 @@ bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const
     ImGui::PopStyleVar();
 
     // INPUT BAR
-    const float total_space = ImGui::GetContentRegionMaxAbs().x;
-    const float min_size_left = 200.f;
+    const float total_space = ImGui::GetContentRegionMax().x;
+    const float min_size_left = 300.f;
 
     if (!_ini_settings.edit_bar)
     {
@@ -911,7 +911,7 @@ bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const
                                                      nullptr,
                                                      navbar_content,
                                                      FsUi_Dialog_Navbar_Size - 1,
-                                                     ImVec2(Max(10.f, total_space - min_size_left - window->DC.CursorPos.x), 0),
+                                                     ImVec2(Max(10.f, total_space - min_size_left), 0),
                                                      ImGuiInputTextFlags_EnterReturnsTrue,
                                                      nullptr,
                                                      nullptr
@@ -941,7 +941,7 @@ bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const
         // The segment click bar
         ImGui::SameLine();
 
-        if (ImGui::BeginChild("##segment_click_bar", ImVec2(Max(10.f, total_space - min_size_left - window->DC.CursorPos.x), ImGui::GetFrameHeight()), 0, 0))
+        if (ImGui::BeginChild("##segment_click_bar", ImVec2(Max(10.f, total_space - min_size_left), ImGui::GetFrameHeight()), 0, 0))
         {
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(style->ItemSpacing.x / 2, 0));
             ImGui::PushStyleColor(ImGuiCol_Button, style->Colors[ImGuiCol_WindowBg]);

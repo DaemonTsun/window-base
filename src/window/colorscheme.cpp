@@ -144,3 +144,12 @@ void colorscheme_set(const colorscheme *scheme)
     set_string(&_ini_settings.colorscheme, scheme->name);
     _current_scheme = scheme;
 }
+
+void colorscheme_set_default()
+{
+    if (_current_scheme != nullptr)
+        return;
+
+    const colorscheme *dark = _colorschemes.data + 1;
+    colorscheme_set(dark);
+}
