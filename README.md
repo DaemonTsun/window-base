@@ -1,11 +1,15 @@
-# window-template
-This is a template repository for GLFW, ImGui, some of my configuration files and some of my utility libraries.
+# window-base
+This is a small glue library for GLFW, ImGui and some additional ImGui controls like a filepicker, as well as additonal utilities.
 
-The compiled executable depends only on OpenGL and standard libraries, all other dependencies are statically compiled into the executable.
+The compiled library. depends only on OpenGL and standard libraries, all other dependencies are statically compiled into the library.
 
 ## Usage
 
-Clone / use as template, change the project name within [CMakeLists.txt](CMakeLists.txt), possibly modify [src/main.cpp](src/main.cpp) to use the new generated project name macro and insert your code into the [`_update`](src/main.cpp#L18) function.
+```cmake
+add_subdirectory(path/to/window-base)
+target_link_libraries(your-target PRIVATE window-base-1)
+target_include_directories(your-target PRIVATE ${window-base-1_SOURCES_DIR} ${window-base-1_INCLUDE_DIRS})
+```
 
 ## Compiling
 
