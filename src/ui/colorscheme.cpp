@@ -4,19 +4,19 @@
 #include "shl/fixed_array.hpp"
 #include "shl/string.hpp"
 #include "shl/memory.hpp"
-#include "window/colorscheme.hpp"
+#include "ui/colorscheme.hpp"
 
 // include all the colorschemes
-#include "window/colorschemes/light.hpp"
-#include "window/colorschemes/dark.hpp"
+#include "ui/colorschemes/light.hpp"
+#include "ui/colorschemes/dark.hpp"
 
 constexpr fixed_array _colorschemes
 {
-    colorscheme{colorscheme_light_name, (colorscheme_apply_function)colorscheme_light_apply},
-    colorscheme{colorscheme_dark_name,  (colorscheme_apply_function)colorscheme_dark_apply}
+    ui::colorscheme{colorscheme_light_name, (ui::colorscheme_apply_function)colorscheme_light_apply},
+    ui::colorscheme{colorscheme_dark_name,  (ui::colorscheme_apply_function)colorscheme_dark_apply}
 };
 
-static const colorscheme *_find_colorscheme_by_name(const_string name)
+static const ui::colorscheme *_find_colorscheme_by_name(const_string name)
 {
     for_array(sc, &_colorschemes)
         if (to_const_string(sc->name) == name)
@@ -56,7 +56,7 @@ static void *_colorscheme_ReadOpenFn(ImGuiContext* ctx, ImGuiSettingsHandler* ha
 {
     (void)ctx;
     (void)handler;
-    if (compare_strings(name, "Preferences") == 0)
+    if (string_compare(name, "Preferences"_cs) == 0)
         return &_ini_settings;
 
     return (void*)nullptr;
@@ -70,16 +70,16 @@ static void _colorscheme_ReadLineFn(ImGuiContext* ctx, ImGuiSettingsHandler* han
 
     const_string line = to_const_string(_line);
 
-    if (begins_with(line, "Name="_cs))
+    if (string_begins_with(line, "Name="_cs))
     {
         const_string schemename = line;
         schemename.c_str += 5;
         schemename.size  -= 5;
 
-        if (is_blank(schemename))
+        if (string_is_blank(schemename))
             return;
 
-        const colorscheme *sc = _find_colorscheme_by_name(schemename);
+        const ui::colorscheme *sc = _find_colorscheme_by_name(schemename);
 
         if (sc == nullptr)
             sc = _colorschemes.data;
@@ -92,7 +92,7 @@ static void _colorscheme_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* han
 {
     (void)ctx;
 
-    if (is_blank(&_ini_settings.colorscheme))
+    if (string_is_blank(&_ini_settings.colorscheme))
         return;
 
     buf->appendf("[%s][Preferences]\n", handler->TypeName);
@@ -101,7 +101,7 @@ static void _colorscheme_WriteAllFn(ImGuiContext* ctx, ImGuiSettingsHandler* han
     buf->append("\n");
 }
 
-void colorscheme_init()
+void ui::colorscheme_init()
 {
     init(&_ini_settings);
 
@@ -115,12 +115,12 @@ void colorscheme_init()
     ImGui::AddSettingsHandler(&ini_handler);
 }
 
-void colorscheme_free()
+void ui::colorscheme_free()
 {
     free(&_ini_settings);
 }
 
-void colorscheme_get_all(const colorscheme **out, int *out_count)
+void ui::colorscheme_get_all(const ui::colorscheme **out, int *out_count)
 {
     assert(out != nullptr);
     assert(out_count != nullptr);
@@ -128,28 +128,28 @@ void colorscheme_get_all(const colorscheme **out, int *out_count)
     *out_count = _colorschemes.size;
 }
 
-static const colorscheme *_current_scheme = nullptr;
+static const ui::colorscheme *_current_scheme = nullptr;
 
-const colorscheme *colorscheme_get_current()
+const ui::colorscheme *ui::colorscheme_get_current()
 {
     return _current_scheme;
 }
 
-void colorscheme_set(const colorscheme *scheme)
+void ui::colorscheme_set(const ui::colorscheme *scheme)
 {
     assert(scheme != nullptr);
     
     ImGuiStyle *st = &ImGui::GetStyle();
     scheme->apply(st);
-    set_string(&_ini_settings.colorscheme, scheme->name);
+    string_set(&_ini_settings.colorscheme, scheme->name);
     _current_scheme = scheme;
 }
 
-void colorscheme_set_default()
+void ui::colorscheme_set_default()
 {
     if (_current_scheme != nullptr)
         return;
 
-    const colorscheme *dark = _colorschemes.data + 1;
-    colorscheme_set(dark);
+    const ui::colorscheme *dark = _colorschemes.data + 1;
+    ui::colorscheme_set(dark);
 }

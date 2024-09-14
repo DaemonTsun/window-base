@@ -1,13 +1,13 @@
 
 #include "shl/defer.hpp"
 
-#include "window/styles/main_style.hpp"
-#include "window/colorscheme.hpp"
+#include "ui/styles/main_style.hpp"
+#include "ui/colorscheme.hpp"
+#include "ui/fonts.hpp"
 #include "window/find_font.hpp"
-#include "window/fonts.hpp"
 #include "window/window_imgui_util.hpp"
 
-#include "fs-ui/filepicker.hpp"
+#include "ui/filepicker.hpp"
 
 #include "project_info.hpp"
 
@@ -23,16 +23,16 @@ static void _template_settings_window()
 
     if (ImGui::CollapsingHeader("Style & Colors"))
     {
-        static const colorscheme *schemes = nullptr;
+        static const ui::colorscheme *schemes = nullptr;
         static int count = 0;
         static int selection = 0;
 
         if (schemes == nullptr)
         {
-            colorscheme_get_all(&schemes, &count);
+            ui::colorscheme_get_all(&schemes, &count);
 
             for (int i = 0; i < count; ++i)
-                if (schemes + i == colorscheme_get_current())
+                if (schemes + i == ui::colorscheme_get_current())
                     selection = i;
         }
 
@@ -43,7 +43,7 @@ static void _template_settings_window()
                 if (ImGui::Selectable(schemes[i].name, selection == i))
                 {
                     selection = i;
-                    colorscheme_set(schemes + i);
+                    ui::colorscheme_set(schemes + i);
                 }
             }
             ImGui::EndCombo();
@@ -94,16 +94,16 @@ static void _update(GLFWwindow *window, double dt)
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
 
         ImGui::Text("No Flags");
-        FsUi::Filepicker("File Label 1", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file");
+        ui::Filepicker("File Label 1", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file");
 
-        ImGui::Text("FsUi_FilepickerFlags_NoDirectories");
-        FsUi::Filepicker("File Label 2", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", FsUi_FilepickerFlags_NoDirectories);
+        ImGui::Text("ui_FilepickerFlags_NoDirectories");
+        ui::Filepicker("File Label 2", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", ui_FilepickerFlags_NoDirectories);
 
-        ImGui::Text("FsUi_FilepickerFlags_NoFiles");
-        FsUi::Filepicker("File Label 3", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", FsUi_FilepickerFlags_NoFiles);
+        ImGui::Text("ui_FilepickerFlags_NoFiles");
+        ui::Filepicker("File Label 3", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", ui_FilepickerFlags_NoFiles);
 
-        ImGui::Text("FsUi_FilepickerFlags_SelectionMustExist");
-        FsUi::Filepicker("File Label 4", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", FsUi_FilepickerFlags_SelectionMustExist);
+        ImGui::Text("ui_FilepickerFlags_SelectionMustExist");
+        ui::Filepicker("File Label 4", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", ui_FilepickerFlags_SelectionMustExist);
 
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
     }
@@ -136,7 +136,7 @@ static void _set_imgui_style_and_colors()
     ImGuiStyle &st = ImGui::GetStyle();
     set_style(&st);
 
-    colorscheme_set_default();
+    ui::colorscheme_set_default();
 }
 
 int main(int argc, const char *argv[])

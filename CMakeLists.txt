@@ -12,12 +12,12 @@ include("cmake/imgui.cmake")
 
 find_package(OpenGL)
 
+# unset UNICODE=1
 set(fs_COMPILE_DEFINITIONS @Windows)
 
-add_exe(window-template
-    VERSION 0.0.1
+add_lib(window-base STATIC 
+    VERSION 1.0.0
     SOURCES_DIR "${ROOT}/src"
-    GENERATE_TARGET_HEADER "${ROOT}/src/project_info.hpp"
     CPP_VERSION 20
     CPP_WARNINGS ALL SANE FATAL
                  @GNU -Werror
@@ -34,13 +34,13 @@ add_exe(window-template
                  ${imgui_INCLUDE_DIRS}
 
     EXT
-        LIB shl      0.9.4 "${ROOT}/ext/shl" INCLUDE LINK GIT_SUBMODULE
-        LIB fs       0.8.2 "${ROOT}/ext/fs"  INCLUDE LINK GIT_SUBMODULE
+        LIB shl      0.10 "${ROOT}/ext/shl" INCLUDE LINK GIT_SUBMODULE
+        LIB fs       0.9  "${ROOT}/ext/fs"  INCLUDE LINK GIT_SUBMODULE
 
     SUBMODULES
         MODULE glfw  "${ROOT}/ext/glfw"
         MODULE imgui "${ROOT}/ext/imgui"
     )
 
-# run
-add_custom_target("run" COMMAND "${ROOT_BIN}/${window-template_TARGET}")
+exit_if_included()
+add_subdirectory(demo)

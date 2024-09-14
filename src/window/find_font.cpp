@@ -144,7 +144,7 @@ static bool _load_registry_fonts_base(ff_cache *c, HKEY hkey, const char *base_p
 
         const_string name = to_const_string(value_name, value_name_length);
 
-        s64 idx = last_index_of(name, " (");
+        s64 idx = string_last_index_of(name, " (");
 
         if (idx != -1)
             name = to_const_string(value_name, idx);
@@ -156,10 +156,10 @@ static bool _load_registry_fonts_base(ff_cache *c, HKEY hkey, const char *base_p
         if (path != nullptr)
             continue;
 
-        string key = copy_string(name);
+        string key = string_copy(name);
         path = add_element_by_key(&c->entries, &key);
-        *path = copy_string(base_path);
-        append_string(path, value);
+        *path = string_copy(base_path);
+        string_append(path, value);
     }
 
     return true;
@@ -432,7 +432,7 @@ static string _find_fontconfig_cache_dir()
 
     for_array(ppath, &_fontconfig_cache_dirs)
     {
-        set_string(&ret, *ppath);
+        string_set(&ret, *ppath);
         resolve_environment_variables(&ret, true);
         fill_memory(ret.data + ret.size, 0, ret.reserved_size - ret.size);
 
@@ -445,7 +445,7 @@ static string _find_fontconfig_cache_dir()
         return ret;
     }
 
-    set_string(&ret, "");
+    string_set(&ret, "");
 
     return ret;
 }
@@ -469,8 +469,8 @@ static void _find_cache_files(const_string dir, array<string> *cache_files)
 
         string *added_filename = add_at_end(cache_files);
         init(added_filename, dir);
-        append_string(added_filename, '/');
-        append_string(added_filename, filename);
+        string_append(added_filename, "/");
+        string_append(added_filename, filename);
     }
 
     closedir(d);
@@ -600,7 +600,7 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
 
         if (e == nullptr)
         {
-            string key = copy_string(name);
+            string key = string_copy(name);
             e = add_element_by_key(&c->entries, &key);
             init(&e->styles);
         }
@@ -617,8 +617,8 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
         else
         {
             ff_cache_entry_style *newstyle = add_at_end(&e->styles);
-            newstyle->style_name = copy_string(style);
-            newstyle->path = copy_string(path);
+            newstyle->style_name = string_copy(style);
+            newstyle->path = string_copy(path);
         }
     }
 }
@@ -628,7 +628,7 @@ static bool _load_fontconfig_cache(ff_cache *c)
     string fc_path = _find_fontconfig_cache_dir();
     defer { free(&fc_path); };
 
-    if (is_empty(fc_path))
+    if (string_is_empty(&fc_path))
     {
         tprint("Error: no fontconfig cache path found\n");
         return false;
@@ -735,9 +735,9 @@ extern "C" const char *ff_find_font_path(ff_cache *cache, const char *font_name,
     if (style_name.size > 0)
     {
         string *buf = &cache->name_buffer;
-        set_string(buf, font_name);
-        append_string(buf, ' ');
-        append_string(buf, style_name);
+        string_set(buf, font_name);
+        string_append(buf, " ");
+        string_append(buf, style_name);
         h = hash(buf);
     }
     else
@@ -786,7 +786,7 @@ extern "C" const char *ff_find_font_path_vague(ff_cache *cache, const char *_fon
         if (hentry->hash <= FIRST_HASH)
             continue;
 
-        if (!begins_with(hentry->key, font_name))
+        if (!string_begins_with(hentry->key, font_name))
             continue;
 
         if (!contains(hentry->key, style_name))
@@ -808,7 +808,7 @@ extern "C" const char *ff_find_font_path_vague(ff_cache *cache, const char *_fon
         if (hentry->hash <= FIRST_HASH)
             continue;
 
-        if (begins_with(hentry->key, font_name))
+        if (string_begins_with(hentry->key, font_name))
         {
             e = &hentry->value;
             break;
@@ -821,7 +821,7 @@ extern "C" const char *ff_find_font_path_vague(ff_cache *cache, const char *_fon
     ff_cache_entry_style *st = nullptr;
 
     for_array(_st, &e->styles)
-        if (begins_with(_st->style_name, style_name))
+        if (string_begins_with(_st->style_name, style_name))
             st = _st;
 
     if (st == nullptr)

@@ -2,6 +2,9 @@
 #pragma once
 
 struct ImGuiStyle;
+
+namespace ui
+{
 typedef void (*colorscheme_apply_function)(ImGuiStyle *dst);
 
 struct colorscheme
@@ -19,3 +22,7 @@ void colorscheme_set(const colorscheme *scheme);
 
 // sets to a colorscheme if none is set
 void colorscheme_set_default();
+
+// TODO: colorscheme picker
+// TODO: colorscheme menu
+}

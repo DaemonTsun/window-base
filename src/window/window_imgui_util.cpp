@@ -9,8 +9,8 @@
 #include "backends/imgui_impl_glfw.h"
 #include "imgui.h"
 
-#include "fs-ui/filepicker.hpp"
-#include "window/colorscheme.hpp"
+#include "ui/filepicker.hpp"
+#include "ui/colorscheme.hpp"
 #include "window/window_imgui_util.hpp"
 
 static const char *_glsl_version = "#version 330";
@@ -161,8 +161,8 @@ void imgui_init(GLFWwindow *window)
     ImGui_ImplGlfw_InitForOpenGL(window, true /* install callbacks */);
     ImGui_ImplOpenGL3_Init(_glsl_version);
 
-    FsUi::Init();
-    colorscheme_init();
+    ui::filepicker_init();
+    ui::colorscheme_init();
 }
 
 void imgui_exit(GLFWwindow *window)
@@ -173,8 +173,8 @@ void imgui_exit(GLFWwindow *window)
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext();
 
-    FsUi::Exit(); // need to exit after imgui so imgui writes ini correctly
-    colorscheme_free();
+    ui::filepicker_exit(); // need to exit after imgui so imgui writes ini correctly
+    ui::colorscheme_free();
 }
 
 void imgui_new_frame()
