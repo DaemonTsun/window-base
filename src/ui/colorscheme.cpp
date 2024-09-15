@@ -153,3 +153,59 @@ void ui::colorscheme_set_default()
     const ui::colorscheme *dark = _colorschemes.data + 1;
     ui::colorscheme_set(dark);
 }
+
+bool ui::ColorschemePicker(const ui::colorscheme **out)
+{
+    bool picked = false;
+
+    if (ImGui::BeginCombo("Colorscheme", _current_scheme->name, 0))
+    {
+        for (s64 i = 0; i < _colorschemes.size; i++)
+        {
+            const ui::colorscheme *scheme = _colorschemes.data + i;
+
+            if (ImGui::Selectable(scheme->name, scheme == _current_scheme))
+            {
+                ui::colorscheme_set(_colorschemes.data + i);
+                picked = true;
+
+                if (out != nullptr)
+                    *out = scheme;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    return picked;
+}
+
+bool ui::ColorschemeMenu(const ui::colorscheme **out)
+{
+    bool picked = false;
+
+    if (ImGui::BeginMenu("Colorscheme"))
+    {
+        static int selection = 0;
+
+        for (int i = 0; i < (int)_colorschemes.size; i++)
+        {
+            const ui::colorscheme *scheme = _colorschemes.data + i;
+
+            if (scheme == _current_scheme)
+                selection = i;
+
+            if (ImGui::RadioButton(scheme->name, &selection, i))
+            {
+                selection = i;
+                ui::colorscheme_set(scheme);
+
+                if (out != nullptr)
+                    *out = scheme;
+            }
+        }
+
+        ImGui::EndMenu();
+    }
+
+    return picked;
+}

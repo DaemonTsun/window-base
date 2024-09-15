@@ -19,37 +19,18 @@ const int window_height = 900;
 
 static void _template_settings_window()
 {
-    ImGui::Begin("Settings");
-
-    if (ImGui::CollapsingHeader("Style & Colors"))
+    if (ImGui::Begin("Settings", nullptr, ImGuiWindowFlags_MenuBar))
     {
-        static const ui::colorscheme *schemes = nullptr;
-        static int count = 0;
-        static int selection = 0;
-
-        if (schemes == nullptr)
+        if (ImGui::BeginMenuBar())
         {
-            ui::colorscheme_get_all(&schemes, &count);
-
-            for (int i = 0; i < count; ++i)
-                if (schemes + i == ui::colorscheme_get_current())
-                    selection = i;
+            ui::ColorschemeMenu();
+            ImGui::EndMenuBar();
         }
 
-        if (ImGui::BeginCombo("Colorscheme", schemes[selection].name, 0))
-        {
-            for (int i = 0; i < count; i++)
-            {
-                if (ImGui::Selectable(schemes[i].name, selection == i))
-                {
-                    selection = i;
-                    ui::colorscheme_set(schemes + i);
-                }
-            }
-            ImGui::EndCombo();
-        }
+        if (ImGui::CollapsingHeader("Style & Colors"))
+            ui::ColorschemePicker();
+
     }
-
     ImGui::End();
 }
 
