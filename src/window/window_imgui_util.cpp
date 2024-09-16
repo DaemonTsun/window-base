@@ -201,3 +201,25 @@ void imgui_set_next_window_full_size()
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
 #endif
 }
+
+unsigned int imgui_hash(const char *str)
+{
+    return ImHashStr(str);
+}
+
+void imgui_push_override_id(unsigned int id)
+{
+    ImGui::PushOverrideID(id);
+}
+
+void imgui_pop_id()
+{
+    ImGui::PopID();
+}
+
+void imgui_open_global_popup(const char *id)
+{
+    ImGui::PushOverrideID(ImHashStr(id));
+    ImGui::OpenPopup(id);
+    ImGui::PopID();
+}
