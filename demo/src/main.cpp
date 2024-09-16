@@ -3,8 +3,8 @@
 
 #include "ui/styles/main_style.hpp"
 #include "ui/colorscheme.hpp"
-#include "ui/fonts.hpp"
 #include "window/find_font.hpp"
+#include "window/find_font_fonts.hpp"
 #include "window/window_imgui_util.hpp"
 
 #include "ui/filepicker.hpp"
@@ -100,8 +100,8 @@ static void _load_imgui_fonts()
     ff_cache *fc = ff_load_font_cache();
     defer { ff_unload_font_cache(fc); };
 
-    const char *ui_font_path = ff_find_first_font_path(fc, (const char**)font_paths_ui, font_paths_ui_count * 2, nullptr);
-    const char *monospace_font_path = ff_find_first_font_path(fc, (const char**)font_paths_monospace, font_paths_monospace_count * 2, nullptr);
+    const char *ui_font_path = ff_find_first_font_path(fc, (const char**)font_names_ui, font_names_ui_count * 2, nullptr);
+    const char *monospace_font_path = ff_find_first_font_path(fc, (const char**)font_names_monospace, font_names_monospace_count * 2, nullptr);
 
     assert(ui_font_path != nullptr);
     assert(monospace_font_path != nullptr);

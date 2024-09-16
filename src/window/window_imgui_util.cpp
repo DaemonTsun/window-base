@@ -1,4 +1,6 @@
 
+#include "imgui.h"
+#include "imgui_internal.h"
 #include "shl/print.hpp"
 #include "shl/time.hpp"
 #include "shl/at_exit.hpp"
@@ -7,7 +9,6 @@
 
 #include "backends/imgui_impl_opengl3.h"
 #include "backends/imgui_impl_glfw.h"
-#include "imgui.h"
 
 #include "ui/filepicker.hpp"
 #include "ui/colorscheme.hpp"
