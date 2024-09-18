@@ -147,6 +147,8 @@ void window_event_loop(GLFWwindow *window, event_loop_update_callback update, ev
 
         update(window, dt);
         render(window, dt);
+
+        start = now;
     }
 }
 
