@@ -3,7 +3,6 @@
 #include "imgui_internal.h"
 #include "shl/print.hpp"
 #include "shl/time.hpp"
-#include "shl/at_exit.hpp"
 
 #include "GLFW/glfw3.h"
 
