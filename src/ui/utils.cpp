@@ -55,3 +55,20 @@ bool ui::ButtonSlice(const_string str, const ImVec2& size_arg, ImGuiButtonFlags 
 {
     return ui::ButtonSlice(str.c_str, str.c_str + str.size, size_arg, flags);
 }
+
+void ui::ScrollWhenDraggingOnVoid(const ImVec2 &delta, ImGuiMouseButton mouse_button)
+{
+    ImGuiContext& g = *ImGui::GetCurrentContext();
+    ImGuiWindow* window = g.CurrentWindow;
+    bool hovered = false;
+    bool held = false;
+    ImGuiID id = window->GetID("##scrolldraggingoverlay");
+    ImGui::KeepAliveID(id);
+    ImGuiButtonFlags button_flags = (mouse_button == 0) ? ImGuiButtonFlags_MouseButtonLeft : (mouse_button == 1) ? ImGuiButtonFlags_MouseButtonRight : ImGuiButtonFlags_MouseButtonMiddle;
+    if (g.HoveredId == 0) // If nothing hovered so far in the frame (not same as IsAnyItemHovered()!)
+        ImGui::ButtonBehavior(window->Rect(), id, &hovered, &held, button_flags);
+    if (held && delta.x != 0.0f)
+        ImGui::SetScrollX(window, window->Scroll.x + delta.x);
+    if (held && delta.y != 0.0f)
+        ImGui::SetScrollY(window, window->Scroll.y + delta.y);
+}
