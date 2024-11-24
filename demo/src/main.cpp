@@ -73,18 +73,19 @@ static void _update(GLFWwindow *window, double dt)
     ImGui::Begin("Filepicker After & Before text");
     {
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
+        const char *filter = "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|INI Files|*.ini|Cool file|cool.file";
 
         ImGui::Text("No Flags");
-        ui::Filepicker("File Label 1", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file");
+        ui::Filepicker("File Label 1", buf, 255, filter);
 
         ImGui::Text("ui_FilepickerFlags_NoDirectories");
-        ui::Filepicker("File Label 2", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", ui_FilepickerFlags_NoDirectories);
+        ui::Filepicker("File Label 2", buf, 255, filter, ui_FilepickerFlags_NoDirectories);
 
         ImGui::Text("ui_FilepickerFlags_NoFiles");
-        ui::Filepicker("File Label 3", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", ui_FilepickerFlags_NoFiles);
+        ui::Filepicker("File Label 3", buf, 255, filter, ui_FilepickerFlags_NoFiles);
 
         ImGui::Text("ui_FilepickerFlags_SelectionMustExist");
-        ui::Filepicker("File Label 4", buf, 255, "Any file|*.*|Office Files|*.docx;*.pptx;*.xlsx|Cool file|cool.file", ui_FilepickerFlags_SelectionMustExist);
+        ui::Filepicker("File Label 4", buf, 255, filter, ui_FilepickerFlags_SelectionMustExist);
 
         ImGui::Text("Lorem ipsum abcdef hello world wpakdfasdfnsdk askldfnslfs");
     }

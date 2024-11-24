@@ -1581,7 +1581,7 @@ bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const
             if (_is_directory_type(diag->selection_type, diag->selection_symlink_target_type))
                 diag->selection_matches_filter = true; // directories always match
             else
-                diag->selection_matches_filter = ui_fs_matches_filter(to_const_string(diag->selection_buffer), diag->filters.data + diag->selected_filter_index);
+                diag->selection_matches_filter = ui_fs_matches_filter(to_nullterm_const_string(diag->selection_buffer), diag->filters.data + diag->selected_filter_index);
         }
     }
 
