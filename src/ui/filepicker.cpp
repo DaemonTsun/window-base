@@ -1009,6 +1009,7 @@ bool FileDialog(const char *label, char *out_filebuf, size_t filebuf_size, const
         storage->SetVoidPtr(id, (void*)diag);
 
         init(diag);
+        copy_memory(out_filebuf, diag->selection_buffer, Min(sizeof(diag->selection_buffer), filebuf_size));
 
         ui_fs_parse_filters(to_const_string(filter), &diag->filters);
         assert(diag->filters.size > 0);
