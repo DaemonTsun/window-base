@@ -430,32 +430,6 @@ The object_ids that we use in this implementation.
 #define FC_STYLE_OBJECT     3
 #define FC_FILE_OBJECT      21
 
-static string _find_fontconfig_cache_dir(::allocator allocator)
-{
-    string ret{};
-    ret.allocator = allocator;
-    struct statx st{};
-
-    for_array(ppath, &_fontconfig_cache_dirs)
-    {
-        string_set(&ret, *ppath);
-        resolve_environment_variables(&ret, true);
-        fill_memory(ret.data + ret.size, 0, ret.reserved_size - ret.size);
-
-        if (statx(AT_FDCWD, ret.data, 0, STATX_TYPE, &st) != 0)
-            continue;
-
-        if (!S_ISDIR(st.stx_mode))
-            continue;
-
-        return ret;
-    }
-
-    string_set(&ret, "");
-
-    return ret;
-}
-
 static void _find_cache_files(const_string dir, array<string> *cache_files, ::allocator allocator)
 {
     DIR *d = opendir(dir.c_str);
@@ -639,26 +613,40 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
 
 static bool _load_fontconfig_cache(ff_cache *c)
 {
-    string fc_path = _find_fontconfig_cache_dir(c->allocator);
-    defer { free(&fc_path); };
+    array<string> cache_files{};
+    cache_files.allocator = c->allocator;
+    defer { free<true>(&cache_files); };
 
-    if (string_is_empty(&fc_path))
+    string fc_path{};
+    defer { free(&fc_path); };
+    struct statx st{};
+    bool any_fontconfig_path_found = false;
+
+    for_array(ppath, &_fontconfig_cache_dirs)
+    {
+        string_set(&fc_path, *ppath);
+        resolve_environment_variables(&fc_path, true);
+        fill_memory(fc_path.data + fc_path.size, 0, fc_path.reserved_size - fc_path.size);
+
+        if (statx(AT_FDCWD, fc_path.data, 0, STATX_TYPE, &st) != 0)
+            continue;
+
+        if (!S_ISDIR(st.stx_mode))
+            continue;
+
+        any_fontconfig_path_found = true;
+        _find_cache_files(to_const_string(fc_path), &cache_files, c->allocator);
+    }
+
+    if (!any_fontconfig_path_found)
     {
         tprint("Error: no fontconfig cache path found\n");
         return false;
     }
 
-    // tprint("found cache path: %\n", fc_path);
-
-    array<string> cache_files{};
-    cache_files.allocator = c->allocator;
-    defer { free<true>(&cache_files); };
-
-    _find_cache_files(to_const_string(fc_path), &cache_files, c->allocator);
-
     if (cache_files.size == 0)
     {
-        tprint("Error: no files found in %\n", fc_path);
+        tprint("Error: no fontconfig cache files found\n");
         return false;
     }
 

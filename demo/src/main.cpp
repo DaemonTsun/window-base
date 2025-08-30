@@ -103,6 +103,11 @@ static void _load_imgui_fonts()
     ff_cache *fc = ff_load_font_cache();
     defer { ff_unload_font_cache(fc); };
 
+    for_font_cache(f, s, p, fc)
+    {
+        tprint("%; %; %\n", f, s, p);
+    }
+
     const char *ui_font_path = ff_find_first_font_path(fc, (const char**)font_names_ui, font_names_ui_count * 2, nullptr);
     const char *monospace_font_path = ff_find_first_font_path(fc, (const char**)font_names_monospace, font_names_monospace_count * 2, nullptr);
 
