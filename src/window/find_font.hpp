@@ -40,3 +40,20 @@ const char *ff_find_first_font_path(ff_cache *cache, const char **font_names_and
 // names don't have to be exact here
 const char *ff_find_first_font_path_vague(ff_cache *cache, const char **font_names_and_styles, int count, int *found_index);
 }
+
+#include "shl/defer.hpp"
+
+struct ff_cache_iterator;
+
+ff_cache_iterator *ff_cache_iterator_create(ff_cache *cache);
+bool ff_cache_iterator_next(ff_cache_iterator *it, const char **font, const char **style, const char **path);
+void ff_cache_iterator_destroy(ff_cache_iterator *it);
+
+#define for_font_cache(Font_Var, Style_Var, Path_Var, Cache)\
+    if constexpr (ff_cache_iterator *Font_Var##_it = ff_cache_iterator_create(Cache); true)\
+    if constexpr (defer { ff_cache_iterator_destroy(Font_Var##_it); }; true)\
+    if constexpr (const char *Font_Var; true)\
+    if constexpr (const char *Style_Var; true)\
+    if constexpr (const char *Path_Var; true)\
+    if (ff_cache_iterator_next(Font_Var##_it, &Font_Var, &Style_Var, &Path_Var))\
+    for (; Font_Var != nullptr; ff_cache_iterator_next(Font_Var##_it, &Font_Var, &Style_Var, &Path_Var))

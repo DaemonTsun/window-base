@@ -7,6 +7,7 @@ On Windows, uses the Registry to find fonts.
 See below for implementation-specific documentation.
 */
 #include "shl/print.hpp"
+#include "shl/assert.hpp"
 
 #include "shl/defer.hpp"
 #include "shl/array.hpp"
@@ -17,7 +18,7 @@ See below for implementation-specific documentation.
 #include "shl/allocator.hpp"
 #include "shl/hash_table.hpp"
 
-#include "window/find_font.hpp"
+#include "find_font.hpp"
 
 #if Windows
 #include <windows.h>
@@ -149,16 +150,20 @@ static bool _load_registry_fonts_base(ff_cache *c, HKEY hkey, const char *base_p
         if (idx != -1)
             name = to_const_string(value_name, idx);
 
-        const_string value = to_const_string(value_data, value_data_length);
+        const_string value = to_const_string(value_data, value_data_length - 1);
 
         string *path = search_by_hash(&c->entries, hash(name));
 
         if (path != nullptr)
             continue;
 
-        string key = string_copy(name);
+        string key{};
+        key.allocator = c->allocator;
+        string_copy(name, &key);
         path = add_element_by_key(&c->entries, &key);
-        *path = string_copy(base_path);
+        *path = {};
+        path->allocator = c->allocator;
+        string_copy(base_path, path);
         string_append(path, value);
     }
 
@@ -425,9 +430,10 @@ The object_ids that we use in this implementation.
 #define FC_STYLE_OBJECT     3
 #define FC_FILE_OBJECT      21
 
-static string _find_fontconfig_cache_dir()
+static string _find_fontconfig_cache_dir(::allocator allocator)
 {
     string ret{};
+    ret.allocator = allocator;
     struct statx st{};
 
     for_array(ppath, &_fontconfig_cache_dirs)
@@ -450,7 +456,7 @@ static string _find_fontconfig_cache_dir()
     return ret;
 }
 
-static void _find_cache_files(const_string dir, array<string> *cache_files)
+static void _find_cache_files(const_string dir, array<string> *cache_files, ::allocator allocator)
 {
     DIR *d = opendir(dir.c_str);
 
@@ -468,6 +474,7 @@ static void _find_cache_files(const_string dir, array<string> *cache_files)
             continue;
 
         string *added_filename = add_at_end(cache_files);
+        added_filename->allocator = allocator;
         init(added_filename, dir);
         string_append(added_filename, "/");
         string_append(added_filename, filename);
@@ -551,7 +558,7 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
     contents.data = buffer->data;
     contents.size = buffer->size - 1;
     contents.position = 0;
-    contents.allocator = buffer->allocator;
+    contents.allocator = c->allocator;
 
     if (contents.size < (s64)sizeof(fontconfig_cache))
     {
@@ -600,7 +607,9 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
 
         if (e == nullptr)
         {
-            string key = string_copy(name);
+            string key{};
+            key.allocator = c->allocator;
+            string_copy(name, &key);
             e = add_element_by_key(&c->entries, &key);
             init(&e->styles);
         }
@@ -617,15 +626,20 @@ static void _parse_fontconfig_cache_file(ff_cache *c, const_string filepath, str
         else
         {
             ff_cache_entry_style *newstyle = add_at_end(&e->styles);
-            newstyle->style_name = string_copy(style);
-            newstyle->path = string_copy(path);
+            newstyle->style_name = {};
+            newstyle->style_name.allocator = c->allocator;
+            string_copy(style, &newstyle->style_name);
+
+            newstyle->path = {};
+            newstyle->path.allocator = c->allocator;
+            string_copy(path, &newstyle->path);
         }
     }
 }
 
 static bool _load_fontconfig_cache(ff_cache *c)
 {
-    string fc_path = _find_fontconfig_cache_dir();
+    string fc_path = _find_fontconfig_cache_dir(c->allocator);
     defer { free(&fc_path); };
 
     if (string_is_empty(&fc_path))
@@ -637,9 +651,10 @@ static bool _load_fontconfig_cache(ff_cache *c)
     // tprint("found cache path: %\n", fc_path);
 
     array<string> cache_files{};
+    cache_files.allocator = c->allocator;
     defer { free<true>(&cache_files); };
 
-    _find_cache_files(to_const_string(fc_path), &cache_files);
+    _find_cache_files(to_const_string(fc_path), &cache_files, c->allocator);
 
     if (cache_files.size == 0)
     {
@@ -650,6 +665,7 @@ static bool _load_fontconfig_cache(ff_cache *c)
     // buffer used for storing cache file contents.
     // is reused between files.
     string buf{};
+    buf.allocator = c->allocator;
 
     for_array(file, &cache_files)
         _parse_fontconfig_cache_file(c, *file, &buf);
@@ -662,12 +678,13 @@ static bool _load_fontconfig_cache(ff_cache *c)
 
 extern "C" ff_cache *ff_load_font_cache(void *_alloc)
 {
-    allocator a = default_allocator;
+    ::allocator a = default_allocator;
 
     if (_alloc != nullptr)
         a = *(allocator*)_alloc;
 
     ff_cache *ret = allocator_alloc_T(a, ff_cache);
+    fill_memory(ret, 0);
     ret->allocator = a;
 
     with_allocator(a)
@@ -949,4 +966,134 @@ extern "C" const char *ff_find_first_font_path_vague(ff_cache *cache, const char
 #else
     return nullptr;
 #endif
+}
+
+#if Windows
+struct ff_cache_iterator
+{
+    ff_cache *cache;
+    s64 entry_index;
+};
+
+bool ff_cache_iterator_next(ff_cache_iterator *it, const char **font, const char **style, const char **path)
+{
+    assert(it != nullptr);
+    assert(font != nullptr);
+    assert(style != nullptr);
+    assert(path != nullptr);
+
+    if (it->entry_index >= it->cache->entries.data.size)
+    {
+        *font = nullptr;
+        *style = nullptr;
+        *path = nullptr;
+        return false;
+    }
+
+    it->entry_index += 1;
+
+    for (; it->entry_index < it->cache->entries.data.size; it->entry_index += 1)
+    {
+        auto *entry = it->cache->entries.data.data + it->entry_index;
+
+        if (entry->hash < FIRST_HASH)
+            continue;
+
+        
+        *font = entry->key.data;
+        *style = nullptr;
+        *path = entry->value.data;
+        return true;
+    }
+
+    *font = nullptr;
+    *style = nullptr;
+    *path = nullptr;
+    return false;
+}
+#elif Linux
+struct ff_cache_iterator
+{
+    ff_cache *cache;
+    s64 entry_index;
+    s64 style_index;
+};
+
+bool ff_cache_iterator_next(ff_cache_iterator *it, const char **font, const char **style, const char **path)
+{
+    assert(it != nullptr);
+    assert(font != nullptr);
+    assert(style != nullptr);
+    assert(path != nullptr);
+
+    if (it->entry_index >= it->cache->entries.data.size)
+    {
+        *font = nullptr;
+        *style = nullptr;
+        *path = nullptr;
+        return false;
+    }
+
+    bool new_entry = false;
+new_entry_label:
+
+    while (it->entry_index < it->cache->entries.data.size && it->cache->entries.data.data[it->entry_index].hash < FIRST_HASH)
+    {
+        it->entry_index += 1;
+        it->style_index = 0;
+        new_entry = true;
+    }
+
+    if (it->entry_index >= it->cache->entries.data.size)
+    {
+        *font = nullptr;
+        *style = nullptr;
+        *path = nullptr;
+        return false;
+    }
+
+    auto *hash_entry = it->cache->entries.data.data + it->entry_index;
+    ff_cache_entry *entry = &hash_entry->value;
+
+    if (!new_entry)
+    {
+        it->style_index += 1;
+        if (it->style_index >= entry->styles.size)
+        {
+            it->entry_index += 1;
+            it->style_index = 0;
+            new_entry = true;
+            goto new_entry_label;
+        }
+    }
+
+    ff_cache_entry_style *style_entry = entry->styles.data + it->style_index;
+
+    *font = hash_entry->key.data;
+    *style = style_entry->style_name.data;
+    *path = style_entry->path.data;
+    return true;
+}
+#endif
+
+
+ff_cache_iterator *ff_cache_iterator_create(ff_cache *cache)
+{
+    assert(cache != nullptr);
+    ff_cache_iterator *it = allocator_alloc_T(cache->allocator, ff_cache_iterator);
+    it->cache = cache;
+
+#if Windows
+    it->entry_index = 0;
+#elif Linux
+    it->entry_index = 0;
+    it->style_index = 0;
+#endif
+
+    return it;
+}
+
+void ff_cache_iterator_destroy(ff_cache_iterator *it)
+{
+    allocator_dealloc_T(it->cache->allocator, it, ff_cache_iterator);
 }

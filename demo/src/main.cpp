@@ -96,6 +96,8 @@ static void _update(GLFWwindow *window, double dt)
     imgui_end_frame();
 }
 
+#include "shl/print.hpp"
+
 static void _load_imgui_fonts()
 {
     ff_cache *fc = ff_load_font_cache();
