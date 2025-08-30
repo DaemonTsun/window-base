@@ -13,6 +13,7 @@ endif()
 
 set(GLFW_LIBRARY_TYPE STATIC)
 set(GLFW_BUILD_DOCS FALSE)
+set(GLFW_BUILD_WAYLAND FALSE)
 
 add_subdirectory("${GLFW_SOURCES_DIR}")
 
